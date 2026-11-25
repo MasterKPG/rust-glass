@@ -1,0 +1,20 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Local agent files
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.mcp.json
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Third-party reference captures, not ours to redistribute
+/references/
+
+# Output of headless renders
+/captures/
