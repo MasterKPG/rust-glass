@@ -4,6 +4,8 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-25
+
 ### Changed
 - Development moved to the dev branch. Merging it into main makes a release.
 
@@ -41,5 +43,6 @@ First public release.
 - Menus stay attached to a button that scrolls or moves.
 - Springs no longer jump the last fraction of a point when they settle.
 
-[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/MasterKPG/rust-glass/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/MasterKPG/rust-glass/releases/tag/v0.1.0
