@@ -1,9 +1,9 @@
 //! The two motion models behind every control.
 //!
-//! [`Gel`] is the press response of a surface: it swells, stretches towards the
-//! finger and lights up from the point of contact. [`Droplet`] is the thumb of
-//! sliders, switches and segmented controls: an opaque knob that lifts into a
-//! clear lens, stretches with speed and squashes when it stops.
+//! [`Gel`] is the press response of a surface: it swells and stretches towards
+//! the finger. [`Droplet`] is the thumb of sliders, switches and segmented
+//! controls: an opaque knob that lifts into a clear lens and changes shape with
+//! acceleration.
 
 use crate::anim::{Spring, Spring2, Tuning};
 use crate::color::Color;
@@ -22,8 +22,6 @@ struct GelState {
     press: Spring,
     pull: Spring2,
     hover: Spring,
-    glow: Spring,
-    at: Vec2,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -31,9 +29,8 @@ pub struct Gel {
     pub rect: Rect,
     pub scale: f32,
     pub press: f32,
+    /// For fills and menu rows. Glass itself does not react to hover.
     pub hover: f32,
-    pub glow_at: Vec2,
-    pub glow: f32,
     pub bend: f32,
 }
 
@@ -51,19 +48,13 @@ impl Gel {
             pull = vec2(rubber(d.x, lim), rubber(d.y, lim));
         }
         let inside = held && r.hovered;
-        let mut moving = s.press.step(
+        let mut shaped = s.press.step(
             if held { if inside { 1.0 } else { 0.55 } } else { 0.0 },
-            ctx.tune(if held { Tuning::new(0.22, 0.75) } else { Tuning::new(0.42, 0.52) }),
+            ctx.tune(if held { Tuning::new(0.24, 0.78) } else { Tuning::new(0.44, 0.56) }),
             dt,
         );
-        moving |= s.pull.step(pull, ctx.tune(Tuning::new(if held { 0.16 } else { 0.4 }, 0.6)), dt);
-        moving |= s.hover.step(r.hovered as u32 as f32, Tuning::SNAP, dt);
-        moving |= s.glow.step(inside as u32 as f32, Tuning::new(if inside { 0.18 } else { 0.55 }, 1.0), dt);
-        if r.hovered
-            && let Some(p) = r.pointer
-        {
-            s.at = p;
-        }
+        shaped |= s.pull.step(pull, ctx.tune(Tuning::new(if held { 0.16 } else { 0.42 }, 0.62)), dt);
+        let moving = s.hover.step(r.hovered as u32 as f32, Tuning::SNAP, dt) | shaped;
         if moving {
             ctx.request_repaint();
         }
@@ -79,30 +70,34 @@ impl Gel {
             (size + Vec2::splat(grow) + stretch).max(Vec2::splat(4.0)),
         );
         Gel {
-            rect,
+            // Exact at rest, so edges stay on whole pixels.
+            rect: if shaped || held { rect } else { rest },
             scale: 1.0 + grow / size.y.max(1.0) * 0.45,
             press: s.press.x,
             hover: s.hover.x,
-            glow_at: s.at,
-            glow: s.glow.x.max(0.0) * 0.34 + s.hover.x * 0.07,
             bend: p.x * 0.018,
         }
     }
 
     pub fn apply(&self, g: &mut Glass) {
-        g.glow = Some((self.glow_at, self.glow));
+        let press = self.press.max(0.0);
+        g.lit = 0.05 * press;
         g.light_bend = self.bend;
-        g.material.refraction *= 1.0 + 0.25 * self.press.max(0.0);
-        g.material.shadow *= 1.0 + 0.35 * self.press.max(0.0);
+        g.material.refraction *= 1.0 + 0.25 * press;
+        g.material.shadow *= 1.0 + 0.35 * press;
     }
 }
 
+/// State of a thumb. Positions are relative to the control, so moving the
+/// control (dragging its window, scrolling) does not move the thumb inside it.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Droplet {
-    /// Center along the axis of travel.
+    /// Center along the axis of travel, from the left edge of the control.
     pub pos: Spring,
     pub lift: Spring,
-    stretch: Spring,
+    /// Follows the velocity; its own rate of change is the smoothed
+    /// acceleration that shapes the drop.
+    chase: Spring,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -110,7 +105,16 @@ pub struct DropletFrame {
     pub size: Vec2,
     pub lift: f32,
     pub bend: f32,
+    /// Not moving and not lifted.
+    pub at_rest: bool,
 }
+
+/// Fitted to the reference footage: the width follows the acceleration through
+/// a spring of 10 rad/s and damping 0.5, saturates at 16 percent, and the area
+/// stays constant.
+const CHASE: Tuning = Tuning::new(0.628, 0.5);
+const STRETCH: f32 = 0.159;
+const STRETCH_AT: f32 = 2.4;
 
 impl Droplet {
     /// `raised` keeps the droplet lifted. `rest` and `lifted` are its sizes.
@@ -129,26 +133,44 @@ impl Droplet {
         // Stay up until nearly home.
         let far = (self.pos.x - target).abs() > rest.x * 0.18;
         let up = raised || (far && self.lift.x > 0.3);
-        let t = if up { Tuning::new(0.26, 0.74) } else { Tuning::new(0.36, 0.72) };
+        let t = if up { Tuning::new(0.27, 0.72) } else { Tuning::new(0.36, 0.76) };
         moving |= self.lift.step(up as u32 as f32, ctx.tune(t), dt);
-        let speed = (self.pos.v.abs() / 950.0).min(1.0);
-        moving |= self.stretch.step(speed, ctx.tune(Tuning::new(0.30, 0.36)), dt);
+        moving |= self.chase.step(self.pos.v, CHASE, dt);
         if moving {
             ctx.request_repaint();
         }
         let lift = self.lift.x.max(0.0);
-        let s = if ctx.theme.reduce_motion { 0.0 } else { self.stretch.x };
+        // Larger controls travel further for the same feel.
+        let k = (rest.y / 24.0).clamp(1.0, 3.0);
+        let u = self.chase.v / 1000.0 / k;
+        let s = if ctx.theme.reduce_motion { 0.0 } else { STRETCH * (u / STRETCH_AT).tanh() };
         let base = rest.lerp(lifted, lift);
-        let amount = 0.35 + 0.65 * lift.min(1.0);
-        let size = vec2(base.x * (1.0 + 0.24 * s * amount), base.y * (1.0 - 0.18 * s * amount));
-        DropletFrame { size, lift, bend: (self.pos.v / 1500.0).clamp(-0.5, 0.5) }
+        let w = 1.0 + s * (0.2 + 0.8 * lift.min(1.0));
+        DropletFrame {
+            size: vec2(base.x * w, base.y / w),
+            lift,
+            bend: (self.pos.v / 1800.0).clamp(-0.35, 0.35),
+            at_rest: !moving && !raised,
+        }
     }
+}
+
+/// Where the thumb is drawn.
+pub fn droplet_rect(ctx: &Context, center: Vec2, f: &DropletFrame) -> Rect {
+    let r = Rect::from_center_size(center, f.size);
+    if f.at_rest { r.snap(ctx.ppp) } else { r }
 }
 
 /// Glass of a droplet: solid knob at rest, clear lens when lifted. `k` is the
 /// scale of the control.
 pub fn droplet_glass(ctx: &Context, rect: Rect, f: &DropletFrame, knob: Color, k: f32) -> Glass {
-    let lens = ctx.theme.lens.scaled(k);
+    let mut lens = ctx.theme.lens.scaled(k);
+    // Less clear glass: a light veil and a calmer bend.
+    let veil = ctx.theme.tinted() * 0.75;
+    lens.light_range.0 = lerp(lens.light_range.0, 0.62, veil);
+    lens.dark_range.0 = lerp(lens.dark_range.0, 0.30, veil);
+    lens.refraction *= 1.0 - 0.35 * veil;
+    lens.chroma *= 1.0 - 0.6 * veil;
     let mut rest = lens;
     rest.refraction = 0.0;
     rest.outer_refraction = 0.0;
@@ -158,6 +180,7 @@ pub fn droplet_glass(ctx: &Context, rect: Rect, f: &DropletFrame, knob: Color, k
     rest.inner_shadow = 0.0;
     rest.dark_edge = 0.0;
     rest.rim = 1.0;
+    rest.rim_base = 0.3;
     rest.rim_width = 0.6 * k.max(1.0).sqrt();
     rest.bleed = 0.0;
     rest.shadow = 0.15;
@@ -174,6 +197,7 @@ pub fn droplet_glass(ctx: &Context, rect: Rect, f: &DropletFrame, knob: Color, k
     m.blur = lerp(9.0, lens.blur, (t * 1.1).min(1.0));
     let mut g = Glass::new(rect, Corner::Capsule, m);
     g.light_bend = f.bend;
+    g.darkness = ctx.theme.dark as u32 as f32;
     g
 }
 
@@ -182,4 +206,57 @@ pub fn droplet_state(ctx: &mut Context, id: Id) -> Droplet {
 }
 pub fn set_droplet(ctx: &mut Context, id: Id, d: Droplet) {
     ctx.set(id.with("droplet"), d);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::Event;
+
+    fn run(path: impl Fn(f32) -> f32, n: usize) -> Vec<Vec2> {
+        let mut ctx = Context::new();
+        let mut d = Droplet::default();
+        let dt = 1.0 / 60.0;
+        (0..n)
+            .map(|i| {
+                let t = i as f32 * dt;
+                ctx.begin_frame(vec2(800.0, 200.0), 1.0, t as f64, &[] as &[Event]);
+                let f = d.step(
+                    &mut ctx,
+                    path(t),
+                    Tuning::new(0.085, 0.95),
+                    true,
+                    vec2(37.0, 24.0),
+                    vec2(50.0, 34.0),
+                );
+                ctx.end_frame();
+                f.size
+            })
+            .collect()
+    }
+
+    #[test]
+    fn area_is_conserved_once_lifted() {
+        let sizes = run(|t| 200.0 + 120.0 * (t * 6.0).sin(), 120);
+        for s in &sizes[60..] {
+            assert!((s.x * s.y / (50.0 * 34.0) - 1.0).abs() < 0.02, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn turning_around_stretches_and_squeezes() {
+        let sizes = run(|t| 200.0 + 120.0 * (t * 6.0).sin(), 240);
+        let w: Vec<f32> = sizes[120..].iter().map(|s| s.x).collect();
+        let max = w.iter().cloned().fold(0.0, f32::max);
+        let min = w.iter().cloned().fold(1e9, f32::min);
+        assert!(max > 52.0 && min < 48.0, "{min} {max}");
+        assert!(max < 50.0 * 1.17 && min > 50.0 * 0.83);
+    }
+
+    #[test]
+    fn rubber_never_exceeds_its_limit() {
+        for d in [-1e4, -10.0, 0.0, 3.0, 1e5] {
+            assert!(rubber(d, 12.0).abs() <= 12.0);
+        }
+    }
 }

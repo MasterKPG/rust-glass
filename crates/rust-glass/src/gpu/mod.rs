@@ -81,9 +81,6 @@ struct Globals {
     light: [f32; 2],
     time: f32,
     ppp: f32,
-    pointer: [f32; 2],
-    pointer_glow: f32,
-    pad: f32,
 }
 
 #[repr(C)]
@@ -475,6 +472,7 @@ impl Renderer {
             label: Some("linear"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
 
@@ -612,17 +610,27 @@ impl Renderer {
     /// Upload an RGBA8 image (not premultiplied).
     pub fn add_image(&mut self, w: u32, h: u32, rgba: &[u8]) -> ImageId {
         assert_eq!(rgba.len(), (w * h * 4) as usize, "image data does not match its size");
+        let levels = 32 - w.max(h).max(1).leading_zeros();
         let t = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("image"),
             size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-            mip_level_count: 1,
+            mip_level_count: levels,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.write_texture(&t, 0, 0, w, h, 4, rgba);
+        self.write_texture(&t, 0, 0, 0, w, h, 4, rgba);
+        // Smaller versions, so scaled down images stay smooth.
+        let (mut lw, mut lh) = (w, h);
+        let mut level: Vec<u8> = Vec::new();
+        for m in 1..levels {
+            let src: &[u8] = if m == 1 { rgba } else { &level };
+            let (nw, nh, next) = halve(src, lw, lh);
+            self.write_texture(&t, m, 0, 0, nw, nh, 4, &next);
+            (lw, lh, level) = (nw, nh, next);
+        }
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image"),
             layout: &self.image_layout,
@@ -644,11 +652,21 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn write_texture(&self, t: &wgpu::Texture, x: u32, y: u32, w: u32, h: u32, bpp: u32, data: &[u8]) {
+    fn write_texture(
+        &self,
+        t: &wgpu::Texture,
+        mip: u32,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+        bpp: u32,
+        data: &[u8],
+    ) {
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: t,
-                mip_level: 0,
+                mip_level: mip,
                 origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
@@ -671,7 +689,7 @@ impl Renderer {
                     }
                 }
             }
-            self.write_texture(t, u.x, u.y, u.w, u.h, bpp, &data);
+            self.write_texture(t, 0, u.x, u.y, u.w, u.h, bpp, &data);
         }
     }
 
@@ -957,9 +975,6 @@ impl Renderer {
                 light: data.light,
                 time: data.time,
                 ppp: data.ppp,
-                pointer: data.pointer,
-                pointer_glow: data.pointer_glow,
-                pad: 0.0,
             }),
         );
         let n_probes = plan.probes.len().min(MAX_PROBES as usize);
@@ -1156,6 +1171,23 @@ impl Renderer {
     }
 }
 
+/// Box filtered half size image.
+fn halve(src: &[u8], w: u32, h: u32) -> (u32, u32, Vec<u8>) {
+    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut out = Vec::with_capacity((nw * nh * 4) as usize);
+    for y in 0..nh {
+        for x in 0..nw {
+            let (x0, y0) = ((x * 2).min(w - 1), (y * 2).min(h - 1));
+            let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+            for c in 0..4 {
+                let at = |x: u32, y: u32| src[((y * w + x) * 4 + c) as usize] as u32;
+                out.push(((at(x0, y0) + at(x1, y0) + at(x0, y1) + at(x1, y1) + 2) / 4) as u8);
+            }
+        }
+    }
+    (nw, nh, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1192,6 +1224,13 @@ mod tests {
         let at = data.shapes.len() as u32;
         data.shapes.push(s);
         data.cmds.push(Cmd::Shapes { start: at, end: at + 1, image: ImageId(0) });
+    }
+
+    #[test]
+    fn halving_averages_and_stops_at_one_pixel() {
+        let (w, h, px) = halve(&[0, 0, 0, 255, 200, 100, 50, 255], 2, 1);
+        assert_eq!((w, h), (1, 1));
+        assert_eq!(px, [100, 50, 25, 255]);
     }
 
     #[test]

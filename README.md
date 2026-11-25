@@ -2,7 +2,17 @@
 
 A GPU rendered UI framework for Rust in the style of Apple's Liquid Glass. Controls bend, blur and color the pixels behind them in real time, including other controls. The API is immediate mode and will look familiar if you know egui.
 
-![Player page of the showcase](docs/player.png)
+![Material lab with a clear lens over ribbons](preview/lab-clear.jpg)
+
+![Material lab with a thick lens over ribbons](preview/lab-lens.jpg)
+
+The selection of a tab bar lifts into a clear blob, and a button splits into drops:
+
+![Dragging the tab bar selection](preview/tabs.gif)
+
+![A button splitting into drops](preview/split.gif)
+
+More pictures are in the [preview](preview) folder: [player](preview/player.jpg), [dark player](preview/player-dark.jpg), [buttons](preview/buttons.jpg), [sliders and switches](preview/sliders.jpg), [segments and tabs](preview/segments.jpg), [text fields](preview/fields.jpg), [menus](preview/menu.jpg), [feedback](preview/feedback.jpg), [windows](preview/windows.jpg), [settings](preview/settings.jpg), and the lab on [regular](preview/lab-regular.jpg) and [thick](preview/lab-thick.jpg) glass and over a [test grid](preview/lab-grid.jpg).
 
 ## Features
 
@@ -11,8 +21,9 @@ A GPU rendered UI framework for Rust in the style of Apple's Liquid Glass. Contr
 - Small glass elements measure their backdrop on the GPU and switch between light and dark with hysteresis
 - Shapes in one element fuse like drops of liquid
 - Every motion is a closed form spring: interruptible and independent of the frame rate
-- Press response that swells, stretches towards the finger and lights up from the point of contact
-- A transparency setting from clear to tinted, plus reduced transparency, reduced motion and increased contrast
+- Press response that swells and stretches towards the finger
+- Slider, switch and tab bar thumbs lift into lenses whose shape follows acceleration, with constant area
+- A transparency setting from ultra clear to tinted that also controls how clear the lifted lenses are, plus reduced transparency, reduced motion and increased contrast
 - Keyboard focus and operation for the interactive controls
 - Draws only on change. An idle window uses no CPU
 
@@ -31,6 +42,8 @@ Drop an image file on the window to use it as wallpaper. Render all pages to PNG
 ```bash
 cargo run --release -p showcase -- --capture captures
 ```
+
+`--preview DIR` renders the pictures of the preview folder the same way. Run the tests with `cargo test --workspace`.
 
 ## Usage
 
@@ -77,7 +90,7 @@ egui was the first choice of base. It paints in one render pass, so a widget can
 
 ## Performance
 
-Measured with `--capture` at 1770 x 1170 on an Intel UHD integrated GPU (i5-1345U, Vulkan), release build: 0.15 to 0.35 ms of UI code and 3 to 7 ms of GPU time per frame, depending on the page. The window appears about 110 ms after start.
+Measured with `--capture` at 1770 x 1170 on an Intel UHD integrated GPU (i5-1345U, Vulkan), release build: 0.2 to 0.4 ms of UI code and 3 to 6 ms of GPU time per frame, depending on the page. The first frame is drawn about 0.3 s after start, including loading the system fonts.
 
 ## Project structure
 
@@ -90,6 +103,7 @@ crates/rust-glass/src
   context.rs   input routing, animation memory, backdrop measurements
   widgets/     components
 examples/showcase
+preview/       pictures of the showcase
 ```
 
 ## Status

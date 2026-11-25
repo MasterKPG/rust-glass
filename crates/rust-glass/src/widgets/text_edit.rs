@@ -275,8 +275,6 @@ impl Widget for TextEdit<'_> {
             m.blur = m.blur.max(4.0);
             let mut g = Glass::new(r.rect, corner, m);
             s = ui.ctx.prepare_glass(id, &mut g, !multi).surface();
-            let at = r.pointer.unwrap_or(r.rect.center());
-            g.glow = Some((at, 0.05 * hov + 0.10 * f));
             ui.painter().glass(&g);
         }
         let off = if multi { vec2(0.0, e.scroll) } else { vec2(e.scroll, 0.0) };

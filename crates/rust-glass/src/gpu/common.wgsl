@@ -6,9 +6,6 @@ struct Globals {
     light: vec2f,       // unit vector pointing towards the light
     time: f32,
     ppp: f32,           // physical pixels per point
-    pointer: vec2f,
-    pointer_glow: f32,  // strength of the press glow that spills on neighbours
-    pad0: f32,
 };
 
 struct Mask {
@@ -44,6 +41,12 @@ fn sd_squircle(p: vec2f, half: vec2f, r_in: vec2f, n: f32) -> vec3f {
     return vec3f(e.y, 0.0, s.y);
 }
 
+// Coverage of a pixel at signed distance `d`. Slightly wider than one pixel,
+// which hides the stair steps of nearly straight edges.
+fn edge_aa(d: f32) -> f32 {
+    return smoothstep(0.72, -0.72, d);
+}
+
 fn mask_coverage(index: u32, p: vec2f) -> f32 {
     if (index == 0u) {
         return 1.0;
@@ -52,7 +55,7 @@ fn mask_coverage(index: u32, p: vec2f) -> f32 {
     let c = (m.rect.xy + m.rect.zw) * 0.5;
     let h = (m.rect.zw - m.rect.xy) * 0.5;
     let d = sd_squircle(p - c, h, m.radius, m.power).x;
-    var a = clamp(0.5 - d, 0.0, 1.0);
+    var a = edge_aa(d);
     if (m.invert > 0.5) {
         a = 1.0 - a;
     }

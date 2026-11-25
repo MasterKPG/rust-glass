@@ -77,9 +77,10 @@ pub struct GlassInst {
     pub bleed: f32,
     pub inner_glow: f32,
     pub inner_shadow: f32,
-    pub glow: f32,
-    pub glow_radius: f32,
-    pub glow_pos: [f32; 2],
+    pub lit: f32,
+    pub rim_base: f32,
+    pub pinch: f32,
+    pub pinch_width: f32,
     pub origin: [f32; 2],
     pub shadow: f32,
     pub shadow_radius: f32,
@@ -124,8 +125,6 @@ pub struct DrawData {
     pub probes: Vec<(u64, [f32; 4])>,
     pub clear: [f32; 4],
     pub light: [f32; 2],
-    pub pointer: [f32; 2],
-    pub pointer_glow: f32,
     pub time: f32,
     pub ppp: f32,
 }
@@ -424,7 +423,11 @@ impl Painter<'_> {
         }
         let s = self.paint.ppp;
         let m: &Material = &g.material;
-        let frost = self.paint.frost.clamp(0.0, 1.0) * m.frosts;
+        // The setting runs from clear over the preset to fully tinted.
+        let setting = self.paint.frost.clamp(0.0, 1.0);
+        let preset = crate::theme::Theme::FROST;
+        let frost = ((setting - preset) / (1.0 - preset)).max(0.0) * m.frosts;
+        let clear = ((preset - setting) / preset).max(0.0) * m.frosts;
         let solid_ui = if self.paint.reduce_transparency { m.frosts } else { 0.0 };
         let presence = g.presence * self.opacity;
         let start = self.paint.data.gshapes.len() as u32;
@@ -458,22 +461,25 @@ impl Painter<'_> {
         let mut hi = lerp(m.light_range.1, m.dark_range.1, d);
         let solid = (solid_ui * 0.9).max(frost * 0.72);
         let target = lerp(0.97, 0.13, d);
+        if m.tint.is_none() {
+            lo *= 1.0 - 0.05 * clear;
+            hi = lerp(hi, 1.0, 0.25 * clear);
+        }
         // The frost setting moves from clear to fully tinted.
         if m.tint.is_none() || m.tint_follow > 0.5 {
             lo = lerp(lo, target, solid);
             hi = lerp(hi, lerp(1.0, 0.18, d), solid);
         }
-        let blur = m.blur * (1.0 + frost * 1.5) + 12.0 * solid_ui;
+        let blur = m.blur * (1.0 + frost * 1.5) * (1.0 - 0.62 * clear) + 12.0 * solid_ui;
         let bounds = g.bounds();
         let grow = m.shadow_radius * 2.0 + m.shadow_y.abs() + 3.0;
         let shadow = (m.shadow * (1.0 + g.shadow_boost)).min(0.6);
         let hc = if self.paint.high_contrast { 0.5 } else { 0.0 };
-        let (gp, gs) = g.glow.unwrap_or((Vec2::ZERO, 0.0));
         let c = bounds.center();
         let inst = GlassInst {
             bounds: self.px(bounds.expand(grow + g.fuse * 0.3)),
             clip: self.px(self.clip),
-            tint: [0.0, 0.0, 0.0, m.tint_follow],
+            tint: [m.sideways, 0.0, 0.0, m.tint_follow],
             shape_start: start,
             shape_count: g.shapes.len() as u32,
             mask: self.mask,
@@ -496,9 +502,10 @@ impl Painter<'_> {
             bleed: m.bleed * presence,
             inner_glow: m.inner_glow * lerp(1.0, 0.6, d),
             inner_shadow: m.inner_shadow,
-            glow: gs,
-            glow_radius: (min_half * 2.6).clamp(26.0, 130.0) * s,
-            glow_pos: [gp.x * s, gp.y * s],
+            lit: g.lit,
+            rim_base: m.rim_base,
+            pinch: m.pinch * k * presence * s,
+            pinch_width: m.pinch_width * k * s,
             origin: [c.x * s, c.y * s],
             shadow: shadow * presence,
             shadow_radius: m.shadow_radius * s,

@@ -3,6 +3,7 @@
 //! cargo run --release -p showcase
 //!
 //! `--capture DIR` renders all pages to PNG without a window and prints timings.
+//! `--preview DIR` renders the pictures of the preview folder.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -239,7 +240,7 @@ fn capture(dir: &str) -> Result<(), String> {
     shot(&mut hl, &mut app, "shot_adapt", 1, 2, &[])?;
     hl.ctx.theme.frost = 1.0;
     shot(&mut hl, &mut app, "shot_frost", 0, 0, &[])?;
-    hl.ctx.theme.frost = 0.0;
+    hl.ctx.theme.frost = Theme::FROST;
     hl.ctx.theme.reduce_transparency = true;
     hl.ctx.theme.high_contrast = true;
     shot(&mut hl, &mut app, "shot_access", 0, 0, &[])?;
@@ -248,11 +249,178 @@ fn capture(dir: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Pictures and short clips (as numbered frames) for the preview folder.
+fn preview(dir: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let (w, h) = (2360u32, 1560u32);
+    let mut hl = Headless::new(w, h, 2.0)?;
+    let mut app = Showcase::new();
+    app.setup(&mut hl.ctx);
+    let dt = 1.0 / 60.0;
+    let save = |hl: &Headless, name: &str| {
+        image::save_buffer(format!("{dir}/{name}.png"), &hl.pixels(), w, h, image::ColorType::Rgba8)
+            .map_err(|e| e.to_string())
+    };
+    let mv = |x: f32, y: f32| vec![Event::PointerMoved(vec2(x, y))];
+    let down = || vec![Event::PointerDown];
+    let up = || vec![Event::PointerUp];
+    let go = |hl: &mut Headless, app: &mut Showcase, page: usize, wall: usize| {
+        app.page = page;
+        app.wall = wall;
+        hl.step(app, dt, &up());
+        hl.step(app, dt, &mv(-50.0, -50.0));
+        hl.settle(app, 1.5);
+    };
+    let press = |hl: &mut Headless, app: &mut Showcase, x: f32, y: f32, wait: usize| {
+        hl.step(app, dt, &mv(x, y));
+        hl.step(app, dt, &down());
+        for _ in 0..wait {
+            hl.step(app, dt, &[]);
+        }
+    };
+    let drag = |hl: &mut Headless, app: &mut Showcase, a: Vec2, b: Vec2, n: usize| {
+        for i in 1..=n {
+            let t = i as f32 / n as f32;
+            let p = a.lerp(b, t * t * (3.0 - 2.0 * t));
+            hl.step(app, dt, &mv(p.x, p.y));
+        }
+    };
+
+    // Material lab on every kind of glass.
+    for (name, m, pos, size) in [
+        ("lab-clear", Material::CLEAR, vec2(905.0, 190.0), 200.0),
+        ("lab-lens", Material::LENS.scaled(3.2), vec2(880.0, 195.0), 190.0),
+        ("lab-thick", Material::THICK, vec2(900.0, 190.0), 210.0),
+        ("lab-regular", Material::REGULAR, vec2(560.0, 130.0), 160.0),
+    ] {
+        go(&mut hl, &mut app, 9, 3);
+        (app.s.lab, app.s.lab_pos, app.s.lab_size) = (m, pos, size);
+        hl.settle(&mut app, 2.0);
+        save(&hl, name)?;
+    }
+    go(&mut hl, &mut app, 9, 4);
+    (app.s.lab, app.s.lab_pos, app.s.lab_size) = (Material::CLEAR, vec2(905.0, 190.0), 200.0);
+    hl.settle(&mut app, 2.0);
+    save(&hl, "lab-grid")?;
+
+    go(&mut hl, &mut app, 0, 0);
+    save(&hl, "player")?;
+    press(&mut hl, &mut app, 548.0, 722.0, 20);
+    drag(&mut hl, &mut app, vec2(548.0, 722.0), vec2(702.0, 722.0), 24);
+    for _ in 0..24 {
+        hl.step(&mut app, dt, &[]);
+    }
+    save(&hl, "player-blob")?;
+    go(&mut hl, &mut app, 0, 2);
+    hl.step(&mut app, dt, &mv(700.0, 300.0));
+    hl.step(&mut app, dt, &[Event::Scroll(vec2(0.0, -90.0))]);
+    hl.settle(&mut app, 1.5);
+    save(&hl, "player-dark")?;
+    go(&mut hl, &mut app, 1, 1);
+    save(&hl, "buttons")?;
+    press(&mut hl, &mut app, 300.0, 617.0, 2);
+    hl.step(&mut app, dt, &up());
+    hl.settle(&mut app, 2.0);
+    save(&hl, "buttons-split")?;
+    go(&mut hl, &mut app, 2, 2);
+    press(&mut hl, &mut app, 500.0, 286.0, 40);
+    save(&hl, "sliders")?;
+    go(&mut hl, &mut app, 3, 3);
+    press(&mut hl, &mut app, 330.0, 289.0, 16);
+    drag(&mut hl, &mut app, vec2(330.0, 289.0), vec2(392.0, 289.0), 20);
+    save(&hl, "segments")?;
+    go(&mut hl, &mut app, 4, 4);
+    save(&hl, "fields")?;
+    go(&mut hl, &mut app, 5, 1);
+    press(&mut hl, &mut app, 340.0, 150.0, 2);
+    hl.step(&mut app, dt, &up());
+    hl.settle(&mut app, 1.5);
+    save(&hl, "menu")?;
+    hl.step(&mut app, dt, &[Event::Key(rust_glass::input::Key::Escape)]);
+    go(&mut hl, &mut app, 6, 1);
+    save(&hl, "feedback")?;
+    go(&mut hl, &mut app, 7, 2);
+    save(&hl, "windows")?;
+    go(&mut hl, &mut app, 8, 3);
+    save(&hl, "settings")?;
+    go(&mut hl, &mut app, 10, 0);
+    press(&mut hl, &mut app, 628.0, 147.0, 16);
+    drag(&mut hl, &mut app, vec2(628.0, 147.0), vec2(470.0, 147.0), 30);
+    for _ in 0..20 {
+        hl.step(&mut app, dt, &[]);
+    }
+    save(&hl, "reference-slider")?;
+
+    // Clips, 30 frames per second.
+    let clip = |hl: &mut Headless,
+                app: &mut Showcase,
+                name: &str,
+                events: &mut dyn FnMut(usize) -> Vec<Event>,
+                n: usize| {
+        let d = format!("{dir}/frames-{name}");
+        std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+        for i in 0..n {
+            hl.step(app, dt, &events(i));
+            if i % 2 == 0 {
+                let path = format!("{d}/{:04}.png", i / 2);
+                image::save_buffer(path, &hl.pixels(), w, h, image::ColorType::Rgba8)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok::<(), String>(())
+    };
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+    go(&mut hl, &mut app, 0, 0);
+    let keys = [548.0f32, 779.0, 625.0, 856.0, 702.0];
+    clip(
+        &mut hl,
+        &mut app,
+        "tabs",
+        &mut |i| {
+            let t = (i as f32 - 20.0) / 34.0;
+            let k = (t.max(0.0) as usize).min(keys.len() - 2);
+            let x = keys[k] + (keys[k + 1] - keys[k]) * ease((t - k as f32).clamp(0.0, 1.0));
+            let mut e = mv(if t < 0.0 { keys[0] } else { x }, 722.0);
+            if i == 4 {
+                e.push(Event::PointerDown);
+            }
+            if i == 176 {
+                e.push(Event::PointerUp);
+            }
+            e
+        },
+        210,
+    )?;
+    go(&mut hl, &mut app, 1, 1);
+    // The split button was left open above; close it first.
+    press(&mut hl, &mut app, 300.0, 617.0, 2);
+    hl.step(&mut app, dt, &up());
+    hl.settle(&mut app, 2.0);
+    clip(
+        &mut hl,
+        &mut app,
+        "split",
+        &mut |i| match i {
+            0 => mv(300.0, 617.0),
+            8 | 90 => down(),
+            12 | 94 => up(),
+            _ => vec![],
+        },
+        150,
+    )?;
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let result = match args.iter().position(|a| a == "--capture") {
-        Some(i) => capture(args.get(i + 1).map_or("captures", String::as_str)),
-        None => run(
+    let dir = |flag: &str| {
+        let i = args.iter().position(|a| a == flag)?;
+        Some(args.get(i + 1).cloned().unwrap_or_else(|| "captures".into()))
+    };
+    let result = match (dir("--capture"), dir("--preview")) {
+        (Some(d), _) => capture(&d),
+        (_, Some(d)) => preview(&d),
+        _ => run(
             Options { title: "rust-glass showcase".into(), size: (1180.0, 800.0), ..Default::default() },
             Showcase::new(),
         ),

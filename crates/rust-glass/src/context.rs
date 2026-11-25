@@ -184,8 +184,6 @@ pub struct Context {
     relayout: bool,
     light: Spring,
     tilt: Vec2,
-    glow: Spring,
-    glow_pos: Vec2,
     scroll_energy: f32,
     toasts: Vec<crate::widgets::overlay::ToastState>,
     open_popups: HashMap<Id, bool>,
@@ -231,8 +229,6 @@ impl Context {
             relayout: false,
             light: Spring::default(),
             tilt: Vec2::ZERO,
-            glow: Spring::default(),
-            glow_pos: Vec2::ZERO,
             scroll_energy: 0.0,
             toasts: Vec::new(),
             open_popups: HashMap::new(),
@@ -312,27 +308,14 @@ impl Context {
         self.focus_list.clear();
         self.focus_seen = false;
 
-        // The virtual light turns a little with the pointer, the stand in for
-        // device tilt on a desktop. Phones feed real tilt through `set_tilt`.
-        let mut target = self.tilt.x;
-        if let Some(p) = self.input.pointer
-            && self.tilt == Vec2::ZERO
-        {
-            target = (p.x / size.x.max(1.0) - 0.5) * 0.55;
-        }
-        target += self.scroll_energy * 0.35;
+        // The virtual light stays put, except for device tilt and a hint of
+        // movement while scrolling.
+        let mut target = self.tilt.x + self.scroll_energy * 0.22;
         self.scroll_energy *= (-self.dt * 9.0).exp();
         if self.theme.reduce_motion {
             target = 0.0;
         }
         if self.light.step(target, Tuning::new(0.55, 1.0), self.dt) {
-            self.repaint = true;
-        }
-        if let Some(p) = self.input.pointer {
-            self.glow_pos = p;
-        }
-        let g = if self.input.down && self.active.is_some() { 1.0 } else { 0.0 };
-        if self.glow.step(g, Tuning::new(if g > 0.0 { 0.16 } else { 0.5 }, 1.0), self.dt) {
             self.repaint = true;
         }
     }
@@ -359,8 +342,6 @@ impl Context {
         let d = &mut self.paint.data;
         d.clear = self.clear.to_array();
         d.light = [a.sin(), -a.cos()];
-        d.pointer = [self.glow_pos.x * self.ppp, self.glow_pos.y * self.ppp];
-        d.pointer_glow = self.glow.x.clamp(0.0, 1.0) * 0.16;
         d.time = self.time as f32;
         d.ppp = self.ppp;
         if self.input.pending() || self.text.needs_rebuild() {
@@ -384,7 +365,7 @@ impl Context {
         self.relayout
     }
 
-    /// Device tilt in radians. Replaces the pointer driven light.
+    /// Device tilt in radians, turns the highlights.
     pub fn set_tilt(&mut self, t: Vec2) {
         self.tilt = t;
     }

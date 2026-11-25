@@ -171,6 +171,11 @@ impl Rect {
     pub fn lerp(&self, o: &Rect, t: f32) -> Rect {
         Rect { min: self.min.lerp(o.min, t), max: self.max.lerp(o.max, t) }
     }
+    /// Edges rounded to whole pixels.
+    pub fn snap(&self, ppp: f32) -> Rect {
+        let f = |v: f32| (v * ppp).round() / ppp;
+        Rect { min: vec2(f(self.min.x), f(self.min.y)), max: vec2(f(self.max.x), f(self.max.y)) }
+    }
     /// Move, without resizing, so the rectangle lies inside `outer`.
     pub fn clamp_inside(&self, outer: Rect) -> Rect {
         let mut d = Vec2::ZERO;

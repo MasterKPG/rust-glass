@@ -153,7 +153,7 @@ impl<'a> Ui<'a> {
         // Whole pixels keep edges and text crisp.
         let p = self.ctx.ppp;
         let snap = |v: f32| (v * p).round() / p;
-        Rect::from_min_size(vec2(snap(r.min.x), snap(r.min.y)), size)
+        Rect { min: vec2(snap(r.min.x), snap(r.min.y)), max: vec2(snap(r.max.x), snap(r.max.y)) }
     }
 
     /// Where the next widget will start.

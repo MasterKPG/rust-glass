@@ -4,11 +4,13 @@
 // A ray through the curved part is bent towards the middle, so pixels near the
 // edge show the backdrop from further inside (compressed, and mirrored right at
 // the rim). `inner_*` controls that bend. `outer_*` adds a thin opposite ring
-// that pulls in light from outside the shape. Red bends more than blue.
+// that pulls in light from outside the shape, `pinch` a wide opposite zone
+// further in, as in a drop with a raised shoulder. Red bends more than blue.
 
 struct Glass {
     bounds: vec4f,
     clip: vec4f,
+    // x: 0 bends equally in all directions, 1 only sideways. w: tint follow.
     tint: vec4f,
     shape_start: u32,
     shape_count: u32,
@@ -37,10 +39,11 @@ struct Glass {
 
     inner_glow: f32,
     inner_shadow: f32,
-    glow: f32,
-    glow_radius: f32,
+    lit: f32,           // even brightening, press feedback
+    rim_base: f32,      // part of the rim that does not depend on the light
 
-    glow_pos: vec2f,
+    pinch: f32,         // outward bend in the middle of the curved part
+    pinch_width: f32,
     origin: vec2f,      // center of magnification
 
     shadow: f32,
@@ -129,6 +132,21 @@ fn bevel(t: f32) -> f32 {
     return 1.0 - sqrt(max(1.0 - u * u, 0.0));
 }
 
+// Displacement along the outward normal at `depth` pixels below the outline.
+fn lens(g: Glass, depth: f32, side: f32) -> f32 {
+    var d = g.outer_amount * bevel(depth / max(g.outer_height, 0.5))
+        - g.inner_amount * mix(1.0, side, g.tint.x) * bevel(depth / max(g.inner_height, 0.5));
+    if (g.pinch > 0.0) {
+        let h = sin(3.14159265 * clamp(depth / max(g.pinch_width, 1.0), 0.0, 1.0));
+        d += g.pinch * mix(1.0, 1.0 - side, g.tint.x) * h * h;
+    }
+    return d;
+}
+
+fn gauss(x: f32) -> f32 {
+    return exp(-x * x);
+}
+
 fn bicubic(uv: vec2f, lod: f32) -> vec3f {
     let dim = vec2f(textureDimensions(backdrop, i32(lod)));
     let x = uv * dim - 0.5;
@@ -186,14 +204,14 @@ fn fs(in: VOut) -> @location(0) vec4f {
     let f = field(g.shape_start, g.shape_count, g.fuse, p);
     let d = f.d;
     let n = f.n;
-    let cov = clamp(0.5 - d, 0.0, 1.0);
+    let cov = edge_aa(d);
 
     // Shadow, under the glass and tinted by the light that passed through it.
     var under = vec4f(0.0);
     if (cov < 1.0 && g.shadow > 0.001) {
         let ds = field_d(g.shape_start, g.shape_count, g.fuse, p - vec2f(0.0, g.shadow_y));
         let soft = 1.0 / (1.0 + exp(ds / (g.shadow_radius * 0.38)));
-        let contact = exp(-max(d, 0.0) / (1.4 * G.ppp)) * g.dark_edge * 0.07;
+        let contact = exp(-max(d, 0.0) / (1.2 * G.ppp)) * min(g.dark_edge, 0.3) * 0.30;
         let a = clamp(g.shadow * soft + contact * g.opacity, 0.0, 1.0);
         var rgb = vec3f(0.0);
         if (g.shadow_tint > 0.0 && a > 0.004) {
@@ -221,33 +239,40 @@ fn fs(in: VOut) -> @location(0) vec4f {
 
         // Lens. Dispersion flips on the far side, where light leaves the body.
         let chroma = g.chroma * mix(1.0, -0.55, smoothstep(0.0, 0.5, far));
-        let mi = bevel(depth / max(g.inner_height, 0.5));
-        let mo = bevel(depth / max(g.outer_height, 0.5));
-        let disp = n * (g.outer_amount * mo - g.inner_amount * mi);
         let base = g.origin + (p - g.origin) / max(g.magnify, 0.05);
+        let side = n.x * n.x * n.x * n.x;
+        let shift = lens(g, depth, side);
+        // How many backdrop pixels one screen pixel covers along the normal.
+        // Near the rim this grows quickly, so those pixels are supersampled.
+        let foot = abs(1.0 - lens(g, depth + 0.5, side) + lens(g, max(depth - 0.5, 0.0), side));
         // The rim of real glass stays clearer than its body.
-        let blur = g.blur * mix(0.45, 1.0, smoothstep(0.0, max(g.inner_height, 1.0), depth));
+        var blur = g.blur * mix(0.45, 1.0, smoothstep(0.0, max(g.inner_height, 1.0), depth));
 
         var c: vec3f;
-        let spread = length(disp) * abs(chroma);
-        if (spread > 0.35) {
-            if (blur < 2.0) {
-                var sum = vec3f(0.0);
-                var wsum = vec3f(0.0);
-                for (var i = 0; i < 7; i++) {
-                    let t = f32(i) / 6.0;
-                    let w = max(vec3f(1.0) - abs(vec3f(t) - vec3f(0.0, 0.5, 1.0)) * 2.0, vec3f(0.0));
-                    sum += sample_bg(base + disp * (1.0 + chroma * (1.0 - 2.0 * t)), blur) * w;
-                    wsum += w;
-                }
-                c = sum / wsum;
-            } else {
-                c.r = sample_bg(base + disp * (1.0 + chroma), blur).r;
-                c.g = sample_bg(base + disp, blur).g;
-                c.b = sample_bg(base + disp * (1.0 - chroma), blur).b;
+        let spread = abs(shift * chroma);
+        if (blur < 3.0 && (spread > 0.35 || foot > 1.3)) {
+            var sum = vec3f(0.0);
+            var wsum = vec3f(0.0);
+            let rr = max(select(blur, 0.0, blur < 1.2), min(foot * 0.09, 2.0));
+            for (var i = 0; i < 8; i++) {
+                let t = (f32(i) + 0.5) / 8.0;
+                // Wavelength and sub pixel depth run through different orders.
+                let sub = (f32((i * 5 + 2) % 8) + 0.5) / 8.0 - 0.5;
+                let w = max(vec3f(1.0) - abs(vec3f(t) - vec3f(0.0, 0.5, 1.0)) * 1.9, vec3f(0.0));
+                let k = lens(g, max(depth + sub, 0.0), side) * (1.0 + chroma * (1.0 - 2.0 * t)) - sub;
+                sum += sample_bg(base + n * k, rr) * w;
+                wsum += w;
             }
+            c = sum / wsum;
         } else {
-            c = sample_bg(base + disp, blur);
+            blur = max(blur, min((foot - 1.0) * 0.4, 6.0));
+            if (spread > 0.35) {
+                c.r = sample_bg(base + n * shift * (1.0 + chroma), blur).r;
+                c.g = sample_bg(base + n * shift, blur).g;
+                c.b = sample_bg(base + n * shift * (1.0 - chroma), blur).b;
+            } else {
+                c = sample_bg(base + n * shift, blur);
+            }
         }
 
         // Light from the wider surroundings spills onto the edge.
@@ -280,35 +305,28 @@ fn fs(in: VOut) -> @location(0) vec4f {
         c = c * (1.0 - g.inner_shadow * e * e * near * op);
         c = mix(c, vec3f(1.0), g.inner_glow * e * e * far * op);
 
-        // Dark line just inside the outline, then the specular rim on top.
-        // The rim is where rays turn the most, so the line takes the color of
-        // the whole body behind it.
-        let rw = g.rim_width;
-        let edge = 1.0 - smoothstep(0.15 * G.ppp, 0.95 * G.ppp, depth);
-        if (edge > 0.0 && g.dark_edge > 0.0) {
+        // Dark line just inside the outline, then the specular rim on top. Both
+        // are soft profiles of the signed distance, so they stay even around
+        // corners. The rim is where rays turn the most, so the dark line takes
+        // the color of the whole body behind it.
+        let sd = -d;
+        let edge = gauss(max(sd - 0.18 * G.ppp, 0.0) / max(0.40 * G.ppp, 0.7));
+        if (edge > 0.01 && g.dark_edge > 0.0) {
             let q = mix(p - n * f.half, g.origin, 0.8);
             let body_c = vibrance(sample_wide(q, max(f.half * 0.85, 6.0 * G.ppp)), 10.0);
             let k = g.dark_edge * edge * op * (1.0 - 0.92 * smoothstep(0.1, 0.8, far));
             c = mix(c, body_c * 0.5, k);
         }
-        let line = clamp(1.0 - abs(depth - rw * 0.5) / max(rw * 0.75, 0.6), 0.0, 1.0);
+        let rw = max(g.rim_width, 0.9);
+        let line = gauss((sd - rw * 0.55) / (rw * 0.68));
         let halo = exp(-depth / max(2.0 * G.ppp, 0.8)) * min(g.inner_glow * 2.4, 0.6) * smoothstep(0.0, 0.5, far);
-        let near_key = 0.84 * (1.0 - 0.9 * g.dark_edge);
-        let key = 0.16 * (1.0 - g.dark_edge) + near_key * pow(near, 1.6) + 1.0 * pow(far, 1.2);
-        let rim_rgb = mix(vec3f(1.0), min(vibrance(c, 1.4) * 1.5 + 0.15, vec3f(1.0)), 0.3);
-        let rim_a = clamp(g.rim * key * (line + halo), 0.0, 1.0) * op;
+        let dir = (1.0 - 0.9 * g.dark_edge) * pow(near, 1.6) + pow(far, 1.2);
+        let key = g.rim_base + (1.0 - g.rim_base) * min(dir, 1.0);
+        let rim_rgb = mix(vec3f(1.0), min(vibrance(c, 1.4) * 1.5 + 0.15, vec3f(1.0)), 0.25);
+        let rim_a = clamp(g.rim * (key * line + dir * halo), 0.0, 1.0) * op;
         c = mix(c, rim_rgb, rim_a);
 
-        // Press glow: starts under the finger, spills onto neighbours.
-        if (g.glow > 0.001) {
-            let q = (p - g.glow_pos) / max(g.glow_radius, 1.0);
-            c = mix(c, vec3f(1.0), clamp(g.glow * exp(-dot(q, q)), 0.0, 1.0));
-        }
-        if (G.pointer_glow > 0.001) {
-            let q = (p - G.pointer) / (64.0 * G.ppp);
-            let w = G.pointer_glow * exp(-dot(q, q)) * (0.35 + 0.65 * exp(-depth / (5.0 * G.ppp)));
-            c = mix(c, vec3f(1.0), clamp(w, 0.0, 1.0) * op);
-        }
+        c = mix(c, vec3f(1.0), g.lit * op);
 
         let fade = smoothstep(0.0, 0.25, op);
         let a = cov * fade;

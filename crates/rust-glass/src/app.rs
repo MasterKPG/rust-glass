@@ -109,6 +109,7 @@ struct Host<A: App> {
 
 /// Open a window and run `app` until it closes.
 pub fn run(options: Options, app: impl App + 'static) -> Result<(), String> {
+    let start = Instant::now();
     let el = EventLoop::new().map_err(|e| e.to_string())?;
     let mut host = Host {
         app,
@@ -116,7 +117,7 @@ pub fn run(options: Options, app: impl App + 'static) -> Result<(), String> {
         options,
         live: None,
         events: Vec::new(),
-        start: Instant::now(),
+        start,
         last: Instant::now(),
         info: FrameInfo::default(),
         clipboard: None,
@@ -142,6 +143,7 @@ impl<A: App> Host<A> {
             .with_visible(false);
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
         window.set_ime_allowed(true);
+        fit_on_screen(&window);
         let instance = Gpu::instance();
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
         let gpu = Gpu::new(instance, Some(&surface), o.low_power)?;
@@ -408,6 +410,23 @@ impl<A: App> ApplicationHandler for Host<A> {
             el.set_control_flow(ControlFlow::Wait);
         }
     }
+}
+
+/// Center the window on its monitor, smaller if it would not fit.
+fn fit_on_screen(window: &Window) {
+    let Some(m) = window.current_monitor().or_else(|| window.primary_monitor()) else { return };
+    let (area, at) = (m.size(), m.position());
+    // Room for a taskbar or dock and the title bar.
+    let reserve = (96.0 * m.scale_factor()) as u32;
+    let size = window.inner_size();
+    let w = size.width.min(area.width.saturating_sub(reserve / 4));
+    let h = size.height.min(area.height.saturating_sub(reserve));
+    if (w, h) != (size.width, size.height) {
+        let _ = window.request_inner_size(PhysicalSize::new(w, h));
+    }
+    let x = at.x + (area.width.saturating_sub(w) / 2) as i32;
+    let y = at.y + (area.height.saturating_sub(h + reserve / 2) / 3) as i32;
+    window.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
 }
 
 fn open_url(u: &str) {

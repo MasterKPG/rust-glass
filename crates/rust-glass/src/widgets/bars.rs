@@ -54,7 +54,8 @@ impl Panel {
         self
     }
 
-    pub fn show<R>(self, ctx: &mut Context, f: impl FnOnce(&mut Ui) -> R) -> R {
+    pub fn show<R>(mut self, ctx: &mut Context, f: impl FnOnce(&mut Ui) -> R) -> R {
+        self.rect = self.rect.snap(ctx.ppp);
         let layer = ctx.layer(self.id, self.order);
         ctx.interact(self.id.with("block"), self.rect, Rect::EVERYTHING, layer, Sense::Hover);
         let m = self.material.unwrap_or(ctx.theme.thick);
@@ -86,7 +87,7 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
     let top = ui.next_pos().y;
     let y = ui.ctx.animate(id, *selected as f32, Tuning::new(0.34, 0.78));
     let v = ui.ctx.get::<crate::anim::Spring>(id).v;
-    let accent = ui.ctx.theme.accent;
+    let accent = ui.ctx.theme.accent.lerp(Color::WHITE, 0.35 * ui.surface.dark());
     // The highlight stretches along its way.
     let s = (v.abs() * 0.9).min(9.0);
     let hl = Rect::from_min_size(vec2(ui.cursor.x, top + y * (h + 2.0)), vec2(w, h))

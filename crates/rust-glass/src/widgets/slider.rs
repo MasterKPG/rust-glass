@@ -3,12 +3,12 @@ use std::ops::RangeInclusive;
 use crate::anim::Tuning;
 use crate::color::Color;
 use crate::context::{Cursor, Response, Sense};
-use crate::geom::{Rect, vec2};
+use crate::geom::{Rect, smoothstep, vec2};
 use crate::input::Key;
 use crate::material::Corner;
 use crate::text::{TextStyle, Weight};
 use crate::ui::{Ui, Widget};
-use crate::widgets::gel::{droplet_glass, droplet_state, rubber, set_droplet};
+use crate::widgets::gel::{droplet_glass, droplet_rect, droplet_state, rubber, set_droplet};
 
 /// Slider with a droplet thumb. While held the thumb is a clear lens, so the
 /// end of the filled track stays visible under the finger.
@@ -59,7 +59,7 @@ impl Widget for Slider<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let k = self.scale;
         let rest = vec2(37.0, 24.0) * k;
-        let lifted = vec2(49.0, 35.5) * k;
+        let lifted = vec2(50.4, 34.6) * k;
         let track_h = 7.2 * k;
         let w = self.width.unwrap_or_else(|| ui.available_width().clamp(80.0, 420.0));
         let h = (rest.y + 8.0 * k).max(ui.ctx.theme.control_height.min(32.0));
@@ -68,10 +68,10 @@ impl Widget for Slider<'_> {
         let (lo, hi) = (*self.range.start(), *self.range.end());
         let span = (hi - lo).max(1e-6);
         let mut d = droplet_state(ui.ctx, r.id);
-        // The thumb travels inside the track.
-        let inset = rest.x * 0.5;
-        let x0 = r.rect.min.x + inset;
-        let x1 = r.rect.max.x - inset;
+        // The thumb travels inside the track. All x values are relative to it.
+        let ox = r.rect.min.x;
+        let x0 = rest.x * 0.5;
+        let x1 = r.rect.width() - rest.x * 0.5;
         let to_x = |v: f32| x0 + (x1 - x0) * ((v - lo) / span).clamp(0.0, 1.0);
 
         // Grabbing the thumb keeps the offset to the pointer.
@@ -84,10 +84,10 @@ impl Widget for Slider<'_> {
             && r.held
         {
             if r.pressed {
-                let at = d.pos.x;
+                let at = d.pos.x + ox;
                 grab = Grab(if (p.x - at).abs() < lifted.x * 0.6 { p.x - at } else { 0.0 });
             }
-            let x = p.x - grab.0;
+            let x = p.x - ox - grab.0;
             over = rubber(x - x.clamp(x0, x1), 10.0 * k);
             let mut v = lo + span * ((x - x0) / (x1 - x0).max(1.0)).clamp(0.0, 1.0);
             if let Some(s) = self.step {
@@ -110,31 +110,35 @@ impl Widget for Slider<'_> {
             ui.ctx.cursor = Cursor::Grab;
         }
 
-        let follow = if r.held && self.step.is_none() && !r.pressed {
-            Tuning::new(0.085, 0.95)
+        let target = to_x(*self.value) + over;
+        // Tight under the finger, loose while catching up after a press elsewhere.
+        let gap = (d.pos.x - target).abs() / lifted.x;
+        let follow = if r.held && self.step.is_none() {
+            Tuning::new(0.085 + 0.16 * smoothstep(0.4, 1.6, gap), 0.92)
         } else {
             Tuning::new(0.30, 0.82)
         };
-        let f = d.step(ui.ctx, to_x(*self.value) + over, follow, r.held, rest, lifted);
+        let f = d.step(ui.ctx, target, follow, r.held, rest, lifted);
         set_droplet(ui.ctx, r.id, d);
+        let px = ox + d.pos.x;
 
         let cy = r.rect.center().y;
         let accent = self.tint.unwrap_or(ui.ctx.theme.accent);
         let track_c = self.track.unwrap_or(ui.surface.fill_strong());
         let knob = self.knob.unwrap_or(ui.surface.knob());
         let track = Rect::from_center_size(r.rect.center(), vec2(w, track_h));
-        let thumb = Rect::from_center_size(vec2(d.pos.x, cy), f.size);
+        let thumb = droplet_rect(ui.ctx, vec2(px, cy), &f);
         let glass = droplet_glass(ui.ctx, thumb, &f, knob, k);
         let step = self.step;
         let mut p = ui.painter();
         p.fill(track, Corner::Round(track_h), track_c);
-        let fill = Rect { min: track.min, max: vec2(d.pos.x.max(track.min.x + track_h), track.max.y) };
+        let fill = Rect { min: track.min, max: vec2(px.max(track.min.x + track_h), track.max.y) };
         p.fill(fill, Corner::Round(track_h), accent);
         if let Some(s) = step {
             let n = (span / s).round() as i32;
             if (1..=12).contains(&n) {
                 for i in 0..=n {
-                    let x = to_x(lo + s * i as f32);
+                    let x = ox + to_x(lo + s * i as f32);
                     let c = Color::black(0.16);
                     p.fill(
                         Rect::from_center_size(vec2(x, cy), vec2(2.0, 2.0) * k),
@@ -245,7 +249,6 @@ impl Widget for Stepper<'_> {
                 bar = bar.union(g.rect);
             }
         }
-        let glow = if ga.glow > gb.glow { (ga.glow_at, ga.glow) } else { (gb.glow_at, gb.glow) };
         let can = (*self.value > *self.range.start(), *self.value < *self.range.end());
         let mut color = ui.surface.text();
         if ui.surface.is_glass() {
@@ -255,7 +258,7 @@ impl Widget for Stepper<'_> {
             let m = ui.ctx.theme.regular;
             let mut g = crate::material::Glass::new(bar, Corner::Capsule, m);
             color = ui.ctx.prepare_glass(id, &mut g, true).surface().text();
-            g.glow = Some(glow);
+            g.lit = 0.04 * ga.press.max(gb.press).max(0.0);
             ui.painter().glass(&g);
         }
         let sep = color.alpha(0.16);

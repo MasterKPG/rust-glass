@@ -76,7 +76,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
         let ab = s.rect.zw - a;
         let h = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-5), 0.0, 1.0);
         let d = length(p - a - ab * h) - s.stroke;
-        cov = clamp(0.5 - d, 0.0, 1.0);
+        cov = edge_aa(d);
     } else if (s.kind == ARC) {
         // radius.x = start angle, radius.y = sweep, round caps
         let q = p - center;
@@ -92,7 +92,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
             let e1 = vec2f(cos(e), sin(e)) * rr;
             d = min(length(q - e0), length(q - e1)) - s.stroke;
         }
-        cov = clamp(0.5 - d, 0.0, 1.0);
+        cov = edge_aa(d);
         // The round cap before the start keeps the start color.
         var at = clamp(ang / max(s.radius.y, 1e-3), 0.0, 1.0);
         if (ang > s.radius.y && 6.2831853 - ang < ang - s.radius.y) {
@@ -102,14 +102,17 @@ fn fs(in: VOut) -> @location(0) vec4f {
     } else {
         let d = sd_squircle(p - center, half, s.radius, s.power).x;
         if (s.stroke > 0.0) {
-            cov = clamp(0.5 - (abs(d + s.stroke * 0.5) - s.stroke * 0.5), 0.0, 1.0);
+            cov = edge_aa(abs(d + s.stroke * 0.5) - s.stroke * 0.5);
         } else if (s.soft > 0.0) {
             cov = 1.0 / (1.0 + exp(d / (s.soft * 0.42)));
         } else {
-            cov = clamp(0.5 - d, 0.0, 1.0);
+            cov = edge_aa(d);
         }
         if (s.kind == IMAGE) {
-            let t = textureSampleLevel(image, samp, in.t, 0.0);
+            let texels = abs(s.uv.zw - s.uv.xy) * vec2f(textureDimensions(image));
+            let ratio = texels / max(half * 2.0, vec2f(1.0));
+            let lod = max(log2(max(max(ratio.x, ratio.y), 0.001)), 0.0);
+            let t = textureSampleLevel(image, samp, in.t, lod);
             color = vec4f(t.rgb * s.color.rgb, t.a * s.color.a);
         } else {
             let t = clamp(dot((p - s.rect.xy) / max(half * 2.0, vec2f(1.0)), s.uv.xy), 0.0, 1.0);

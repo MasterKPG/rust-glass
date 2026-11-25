@@ -81,7 +81,7 @@ fn check_face(ui: &mut Ui, r: &Response, gel: &Gel, c: Rect, corner: Corner, t: 
     m.tint = Some(accent.alpha(0.92 * t));
     let mut g = Glass::new(c, corner, m);
     ui.ctx.prepare_glass(r.id, &mut g, true);
-    g.glow = Some((gel.glow_at, gel.glow));
+    g.lit = 0.05 * gel.press.max(0.0);
     ui.painter().glass(&g);
 }
 
@@ -302,7 +302,7 @@ impl Widget for ColorPicker<'_> {
         m.tint = Some(self.color.alpha(0.95));
         m.tint_follow = 0.4;
         let mut g = Glass::new(gel.rect, Corner::Capsule, m);
-        g.glow = Some((gel.glow_at, gel.glow));
+        g.lit = 0.05 * gel.press.max(0.0);
         ui.painter().glass(&g);
 
         #[derive(Clone, Copy, Default)]

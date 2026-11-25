@@ -4,6 +4,8 @@ use rust_glass::prelude::*;
 use crate::Showcase;
 
 pub struct State {
+    shown: usize,
+    enter: Spring,
     playing: bool,
     position: f32,
     tab: usize,
@@ -42,14 +44,16 @@ pub struct State {
     ref_v: f32,
     ref_seg: usize,
     ref_toggle: bool,
-    lab: Material,
-    lab_pos: Vec2,
-    lab_size: f32,
+    pub lab: Material,
+    pub lab_pos: Vec2,
+    pub lab_size: f32,
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
+            shown: usize::MAX,
+            enter: Spring::at(1.0),
             playing: true,
             position: 0.34,
             tab: 0,
@@ -109,7 +113,19 @@ pub fn show(app: &mut Showcase, ctx: &mut Context, main: Rect) {
 /// Pages that are a list of sections.
 fn scrolled(app: &mut Showcase, ctx: &mut Context, main: Rect, page: usize) {
     let r = Rect { min: main.min + vec2(14.0, 0.0), max: main.max - vec2(10.0, 0.0) };
+    // A new page forms out of nothing: glass fades in by its optics.
+    if app.s.shown != page {
+        app.s.shown = page;
+        app.s.enter = Spring::at(0.0);
+    }
+    let tune = ctx.tune(Tuning::new(0.42, 1.0));
+    if app.s.enter.step(1.0, tune, ctx.dt) {
+        ctx.request_repaint();
+    }
+    let enter = app.s.enter.x;
+    let r = r.translate(vec2(0.0, 12.0 * (1.0 - enter)));
     region(ctx, ("page", page), r, |ui| {
+        ui.opacity = enter;
         ScrollArea::new().fade(36.0, 36.0).insets(34.0, 40.0).show(ui, |ui| {
             ui.max.max.x -= 18.0;
             ui.spacing = 14.0;
@@ -622,8 +638,6 @@ fn lab(app: &mut Showcase, ctx: &mut Context, main: Rect) {
         Rect::from_center_size(v.pos(), vec2(sz.x * (1.0 + sx - sy * 0.6), sz.y * (1.0 + sy - sx * 0.6)));
     let mut g = Glass::new(body, Corner::Radius(s.lab_size * 0.36), s.lab);
     g.light_bend = (vel.x / 2500.0).clamp(-0.5, 0.5);
-    let press = ctx.animate_bool(Id::new("lens press"), res.held, Tuning::SMOOTH);
-    g.glow = Some((ctx.pointer_or(s.lab_pos), press.max(0.0) * 0.25));
     let a = ctx.prepare_glass(Id::new("lens"), &mut g, true);
     let l = ctx.text.layout("Drag me", &TextStyle::new(17.0).weight(Weight::Semibold));
     let mut p = ctx.painter(layer, Rect::EVERYTHING);

@@ -1,3 +1,4 @@
+use crate::anim::Tuning;
 use crate::color::Color;
 use crate::context::{Context, Cursor, Id, Response, Sense};
 use crate::geom::{Rect, Vec2, vec2};
@@ -164,7 +165,7 @@ impl Widget for Button<'_> {
             // Glass on glass muddies both. On a glass surface buttons are fills.
             (_, true) => {
                 let base = fill.unwrap_or(ui.surface.fill());
-                let lit = Color::white(0.10 * gel.hover + 0.16 * gel.press);
+                let lit = Color::white(0.05 * gel.hover + 0.08 * gel.press.max(0.0));
                 let mut p = ui.painter();
                 p.fill(gel.rect, self.corner, base);
                 p.fill(gel.rect, self.corner, lit);
@@ -232,7 +233,7 @@ impl<'a> ButtonGroup<'a> {
         let mut clicked = None;
         let mut gels = Vec::with_capacity(self.items.len());
         let mut bar = rect;
-        let mut glow: (Vec2, f32) = (rect.center(), 0.0);
+        let mut press: f32 = 0.0;
         for (i, item) in self.items.iter().enumerate() {
             let r = Rect::from_min_size(vec2(rect.min.x + cell * i as f32, rect.min.y), vec2(cell, h));
             let res = ui.interact(id.with(i), r, Sense::Click);
@@ -241,9 +242,7 @@ impl<'a> ButtonGroup<'a> {
                 clicked = Some(i);
             }
             let g = Gel::update(ui.ctx, &res, 1.0);
-            if g.glow > glow.1 {
-                glow = (g.glow_at, g.glow);
-            }
+            press = press.max(g.press);
             if g.press.abs() > 0.001 {
                 // The whole bar swells around the pressed item.
                 bar = bar.union(g.rect.shrink2(vec2(0.0, 1.0)));
@@ -256,7 +255,7 @@ impl<'a> ButtonGroup<'a> {
         let m = ui.ctx.theme.regular;
         let mut glass = Glass::new(bar, Corner::Capsule, m);
         let a = ui.ctx.prepare_glass(id, &mut glass, true);
-        glass.glow = Some(glow);
+        glass.lit = 0.04 * press;
         let color = a.surface().text();
         let hl = a.surface().fill();
         let mut p = ui.painter();
@@ -288,37 +287,28 @@ impl SplitButton<'_> {
         let main = ui.interact(id.with("main"), home, Sense::Click);
         if main.clicked {
             open = !open;
-            ui.ctx.set(id, open);
-        } else {
-            ui.ctx.set(id, open);
         }
+        ui.ctx.set(id, open);
         let gel = Gel::update(ui.ctx, &main, 1.0);
         let mut clicked = None;
         let mut shapes = vec![GlassShape::new(gel.rect, Corner::Capsule)];
         let mut faces = Vec::new();
-        // No merging while the drops are still inside the main one.
-        let mut spread: f32 = 0.0;
+        let (mut lead, mut tail) = (0.0f32, 1.0f32);
         for (i, item) in self.items.iter().enumerate() {
             // Each drop leaves a little later than the one before.
             let t = ui.ctx.animate(
                 id.with(("drop", i)),
                 open as u32 as f32,
-                crate::anim::Tuning::new(0.42 + 0.07 * i as f32, 0.70),
+                Tuning::new(0.40 + 0.055 * i as f32, 0.72),
             );
-            spread = spread.max(t.clamp(0.0, 1.0));
+            lead = lead.max(t.clamp(0.0, 1.0));
+            tail = tail.min(t.clamp(0.0, 1.0));
             let x = home.min.x + (d + gap) * (i + 1) as f32 * t;
-            let size = d * (0.45 + 0.55 * t.clamp(0.0, 1.2));
+            let size = d * (0.45 + 0.55 * t.clamp(0.0, 1.0));
             let r = Rect::from_center_size(vec2(x + d * 0.5, home.center().y), Vec2::splat(size));
-            let res = if open {
-                ui.interact(id.with(("item", i)), r, Sense::Click)
-            } else {
-                ui.interact(id.with(("item", i)), Rect::NOTHING, Sense::Hover)
-            };
-            let g = if open {
-                Gel::update(ui.ctx, &res, 1.0)
-            } else {
-                Gel::update(ui.ctx, &Response { rect: r, ..res }, 0.0)
-            };
+            let hit = if open { r } else { Rect::NOTHING };
+            let res = ui.interact(id.with(("item", i)), hit, if open { Sense::Click } else { Sense::Hover });
+            let g = Gel::update(ui.ctx, &Response { rect: r, ..res }, if open { 1.0 } else { 0.0 });
             if res.clicked {
                 clicked = Some(i);
                 ui.ctx.set(id, false);
@@ -328,12 +318,16 @@ impl SplitButton<'_> {
             );
             faces.push((g, item.0, t));
         }
+        // The pull between drops exists only while they are in motion: none
+        // while they sit inside the main one, none once they have parted.
+        let part = crate::geom::smoothstep(0.55, 0.96, tail);
+        let fuse = 22.0 * crate::geom::smoothstep(0.0, 0.25, lead) * (1.0 - part);
         let m = ui.ctx.theme.regular;
-        let mut glass = Glass::group(shapes, m).fuse(22.0 * spread);
+        let mut glass = Glass::group(shapes, m).fuse(fuse);
         let a = ui.ctx.prepare_glass(id, &mut glass, true);
-        glass.glow = Some((gel.glow_at, gel.glow));
+        glass.lit = 0.05 * gel.press.max(0.0);
         let color = a.surface().text();
-        let t = ui.ctx.animate(id.with("rot"), open as u32 as f32, crate::anim::Tuning::BOUNCY);
+        let t = ui.ctx.animate(id.with("rot"), open as u32 as f32, Tuning::BOUNCY);
         let mut p = ui.painter();
         p.glass(&glass);
         let c = gel.rect.center();
@@ -373,7 +367,7 @@ impl Ui<'_> {
         let l = self.layout_text(label, &st);
         let r = self.alloc_interact(l.size, Sense::Click);
         let c = self.ctx.theme.accent;
-        let u = self.ctx.animate_bool(r.id.with("u"), r.hovered, crate::anim::Tuning::SNAP);
+        let u = self.ctx.animate_bool(r.id.with("u"), r.hovered, Tuning::SNAP);
         if r.hovered {
             self.ctx.cursor = Cursor::Pointer;
         }
@@ -393,5 +387,33 @@ impl Ui<'_> {
             self.ctx.host.push(crate::context::HostCmd::OpenUrl(url.into()));
         }
         r
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{Context, Order};
+    use crate::input::Event;
+
+    #[test]
+    fn drops_part_completely() {
+        let mut ctx = Context::new();
+        let mut frame = |i: usize, ev: &[Event]| {
+            ctx.begin_frame(vec2(600.0, 200.0), 1.0, i as f64 / 60.0, ev);
+            let layer = ctx.layer(Id::new("l"), Order::Content);
+            let mut ui = Ui::new(&mut ctx, layer, Id::new("u"), crate::geom::rect(20.0, 20.0, 500.0, 100.0));
+            SplitButton { icon: Icon::Plus, items: &[(Icon::Star, Color::RED), (Icon::Heart, Color::BLUE)] }
+                .show(&mut ui);
+            ctx.end_frame();
+            ctx.paint.data.glasses[0].fuse
+        };
+        assert_eq!(frame(0, &[]), 0.0);
+        frame(1, &[Event::PointerMoved(vec2(45.0, 45.0))]);
+        frame(2, &[Event::PointerDown]);
+        frame(3, &[Event::PointerUp]);
+        let fuse: Vec<f32> = (4..120).map(|i| frame(i, &[])).collect();
+        assert!(fuse.iter().cloned().fold(0.0, f32::max) > 10.0, "they pull while parting");
+        assert_eq!(*fuse.last().unwrap(), 0.0);
     }
 }

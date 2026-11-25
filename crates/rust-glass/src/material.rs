@@ -55,6 +55,12 @@ pub struct Material {
     /// Opposite bend in a thin ring at the outline.
     pub outer_refraction: f32,
     pub outer_depth: f32,
+    /// Wide opposite bend further in, the raised shoulder of a drop.
+    pub pinch: f32,
+    pub pinch_width: f32,
+    /// 0 bends equally in all directions. At 1 the main bend works sideways only
+    /// and the pinch up and down only.
+    pub sideways: f32,
     /// Chromatic aberration, as a fraction of the bend.
     pub chroma: f32,
     pub blur: f32,
@@ -67,6 +73,8 @@ pub struct Material {
     /// Specular edge strength and width.
     pub rim: f32,
     pub rim_width: f32,
+    /// Part of the rim that shows all around, whatever the light.
+    pub rim_base: f32,
     pub dark_edge: f32,
     /// Light spilling in from the surroundings.
     pub bleed: f32,
@@ -93,6 +101,9 @@ impl Material {
         depth: 13.0,
         outer_refraction: 3.0,
         outer_depth: 4.0,
+        pinch: 0.0,
+        pinch_width: 20.0,
+        sideways: 0.0,
         chroma: 0.10,
         blur: 4.2,
         magnify: 1.0,
@@ -101,7 +112,8 @@ impl Material {
         saturation: 1.45,
         rim: 0.75,
         rim_width: 0.8,
-        dark_edge: 0.26,
+        rim_base: 0.34,
+        dark_edge: 0.22,
         bleed: 0.18,
         inner_glow: 0.16,
         inner_shadow: 0.05,
@@ -163,6 +175,7 @@ impl Material {
         saturation: 1.06,
         rim: 1.0,
         rim_width: 0.75,
+        rim_base: 0.06,
         dark_edge: 0.92,
         bleed: 0.0,
         inner_glow: 0.20,
@@ -173,6 +186,33 @@ impl Material {
         shadow_tint: 0.95,
         frosts: 0.0,
         ..Material::REGULAR
+    };
+
+    /// The selection of a tab bar while touched: a clear blob that stands proud
+    /// of the bar, with a white outline and rainbow caps.
+    pub const BLOB: Material = Material {
+        refraction: 23.0,
+        depth: 16.0,
+        outer_refraction: 7.0,
+        outer_depth: 2.2,
+        pinch: 4.0,
+        pinch_width: 18.0,
+        sideways: 0.82,
+        chroma: 0.34,
+        light_range: (0.0, 1.0),
+        dark_range: (0.0, 1.0),
+        saturation: 1.05,
+        rim: 0.85,
+        rim_width: 0.6,
+        rim_base: 0.62,
+        dark_edge: 0.0,
+        inner_glow: 0.05,
+        inner_shadow: 0.0,
+        shadow: 0.13,
+        shadow_radius: 11.0,
+        shadow_y: 5.0,
+        shadow_tint: 0.2,
+        ..Material::LENS
     };
 
     pub fn tinted(mut self, c: Color) -> Self {
@@ -186,6 +226,8 @@ impl Material {
         self.depth *= k;
         self.outer_refraction *= k;
         self.outer_depth *= k;
+        self.pinch *= k;
+        self.pinch_width *= k;
         self.rim_width *= k.max(1.0).sqrt();
         self.shadow_radius *= k;
         self.shadow_y *= k;
@@ -201,6 +243,9 @@ impl Material {
             depth: l(self.depth, o.depth),
             outer_refraction: l(self.outer_refraction, o.outer_refraction),
             outer_depth: l(self.outer_depth, o.outer_depth),
+            pinch: l(self.pinch, o.pinch),
+            pinch_width: l(self.pinch_width, o.pinch_width),
+            sideways: l(self.sideways, o.sideways),
             chroma: l(self.chroma, o.chroma),
             blur: l(self.blur, o.blur),
             magnify: l(self.magnify, o.magnify),
@@ -209,6 +254,7 @@ impl Material {
             saturation: l(self.saturation, o.saturation),
             rim: l(self.rim, o.rim),
             rim_width: l(self.rim_width, o.rim_width),
+            rim_base: l(self.rim_base, o.rim_base),
             dark_edge: l(self.dark_edge, o.dark_edge),
             bleed: l(self.bleed, o.bleed),
             inner_glow: l(self.inner_glow, o.inner_glow),
@@ -260,8 +306,8 @@ pub struct Glass {
     pub darkness: f32,
     /// Extra shadow, set from backdrop contrast.
     pub shadow_boost: f32,
-    /// Touch glow: position and strength.
-    pub glow: Option<(Vec2, f32)>,
+    /// Even brightening, the press feedback.
+    pub lit: f32,
     /// Extra rotation of the highlights in radians.
     pub light_bend: f32,
     /// Measure the backdrop for this slot.
@@ -280,7 +326,7 @@ impl Glass {
             presence: 1.0,
             darkness: 0.0,
             shadow_boost: 0.0,
-            glow: None,
+            lit: 0.0,
             light_bend: 0.0,
             stat_key: None,
         }
@@ -291,10 +337,6 @@ impl Glass {
     }
     pub fn fuse(mut self, f: f32) -> Self {
         self.fuse = f;
-        self
-    }
-    pub fn glow(mut self, pos: Vec2, strength: f32) -> Self {
-        self.glow = Some((pos, strength));
         self
     }
     pub fn darkness(mut self, d: f32) -> Self {

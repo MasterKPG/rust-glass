@@ -22,6 +22,7 @@ struct PopupState {
     t: Spring,
     size: Vec2,
     live: bool,
+    anchor: Vec2,
     /// Frame in which it opened, so the opening click does not close it.
     born: u64,
 }
@@ -47,9 +48,15 @@ pub fn popup(ctx: &mut Context, id: Id, anchor: Rect, width: f32, f: impl FnOnce
             t: Spring::at(0.0),
             size: s.size,
             live: true,
+            anchor: anchor.min,
             born: ctx.frame,
         };
     }
+    // Stay glued to an anchor that scrolls or moves with its window.
+    let carried = anchor.min - s.anchor;
+    s.anchor = anchor.min;
+    s.shape.center.x.x += carried.x;
+    s.shape.center.y.x += carried.y;
     let dt = ctx.dt;
     let size = if s.size == Vec2::ZERO { vec2(width, 60.0) } else { s.size };
     let full = place(anchor, size, ctx.screen);
@@ -596,7 +603,7 @@ pub(crate) fn show_toasts(ctx: &mut Context) {
     }
     list.retain(|t| t.born.is_some_and(|b| now - b < 2.6) || t.t.x > 0.01);
     ctx.request_repaint();
-    let mut g = Glass::group(shapes, ctx.theme.thick).fuse(16.0);
+    let mut g = Glass::group(shapes, ctx.theme.thick).fuse(5.0);
     g.material.shadow_radius = 22.0;
     g.material.blur = 6.0;
     let a = ctx.prepare_glass(Id::new("toasts"), &mut g, false);
@@ -645,7 +652,7 @@ impl<'a> Window<'a> {
         #[derive(Clone, Copy)]
         struct St {
             pos: Vec2,
-            off: crate::anim::Spring2,
+            grab: Vec2,
             h: f32,
             t: Spring,
             fold: Spring,
@@ -654,7 +661,7 @@ impl<'a> Window<'a> {
         let id = Id::new(("window", self.title));
         let mut s: St = ctx.try_get(id).unwrap_or(St {
             pos: self.pos,
-            off: crate::anim::Spring2::at(Vec2::ZERO),
+            grab: Vec2::ZERO,
             h: 0.0,
             t: Spring::at(0.0),
             fold: Spring::at(0.0),
@@ -681,41 +688,37 @@ impl<'a> Window<'a> {
         let bar = Rect::from_min_size(r.min, vec2(self.width, bar_h));
         ctx.interact(id.with("block"), r, Rect::EVERYTHING, layer, Sense::Click);
         let drag = ctx.interact(id.with("bar"), bar, Rect::EVERYTHING, layer, Sense::Drag);
-        if drag.held {
-            s.pos += drag.delta;
-            ctx.request_repaint();
+        if drag.held
+            && let Some(p) = drag.pointer
+        {
+            if drag.pressed {
+                s.grab = p - s.pos;
+            }
+            s.pos = p - s.grab;
         }
         if drag.double_clicked {
             s.folded = !s.folded;
         }
         s.pos = Rect::from_min_size(s.pos, vec2(self.width, bar_h)).clamp_inside(ctx.screen).min;
-        // The body lags a little behind the pointer, like a hanging drop.
-        let lag = if drag.held { drag.delta * -0.6 } else { Vec2::ZERO };
-        if s.off.step(lag, ctx.tune(Tuning::new(0.34, 0.5)), ctx.dt) {
-            ctx.request_repaint();
-        }
-        let o = s.off.pos();
-        r = Rect::from_min_size(s.pos, r.size());
-        let body = Rect {
-            min: r.min + vec2(o.x.min(0.0), o.y.min(0.0)),
-            max: r.max + vec2(o.x.max(0.0), o.y.max(0.0)),
+        // The window is rigid, everything in it moves as one. Lifting it only
+        // deepens its shadow.
+        let held = ctx.animate_bool(id.with("held"), drag.held, Tuning::SMOOTH).max(0.0);
+        r = Rect::from_min_size(s.pos, r.size()).snap(ctx.ppp);
+        let body = if (k - 1.0).abs() < 0.001 {
+            r
+        } else {
+            r.scale_from_center(lerp(0.82, 1.0, k), lerp(0.82, 1.0, k))
         };
-        let body = body.scale_from_center(lerp(0.82, 1.0, k), lerp(0.82, 1.0, k));
         let mut g = Glass::new(body, Corner::Radius(26.0), ctx.theme.thick).presence(k);
-        g.light_bend = (o.x * 0.02).clamp(-0.4, 0.4);
+        g.material.shadow *= 1.0 + 0.35 * held;
+        g.material.shadow_y *= 1.0 + 0.3 * held;
         let a = ctx.prepare_glass(id, &mut g, false);
         let op = smoothstep(0.3, 0.9, k);
         let title = ctx.text.layout(self.title, &TextStyle::new(14.0).weight(Weight::Semibold));
         let surf = a.surface();
         let mut p = ctx.painter(layer, Rect::EVERYTHING);
+        p.glass(&g);
         p.opacity = op;
-        {
-            let mut pg = Glass { presence: k.clamp(0.0, 1.0), ..g.clone() };
-            pg.presence = k.clamp(0.0, 1.0);
-            p.opacity = 1.0;
-            p.glass(&pg);
-            p.opacity = op;
-        }
         p.text_centered(Rect::from_min_size(r.min, vec2(self.width, bar_h)), &title, surf.text(), 1.0);
 
         // Close and collapse buttons.
@@ -760,6 +763,48 @@ impl<'a> Window<'a> {
         if close && let Some(o) = self.open {
             *o = false;
             ctx.request_repaint();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::Event;
+
+    #[test]
+    fn controls_stay_put_inside_a_dragged_window() {
+        let mut ctx = Context::new();
+        let (mut value, mut on, mut seg) = (0.4, true, 1);
+        let mut offsets: Vec<Vec<f32>> = Vec::new();
+        let mut frame = |ctx: &mut Context, i: usize, ev: &[Event]| {
+            ctx.begin_frame(vec2(900.0, 700.0), 1.0, i as f64 / 60.0, ev);
+            Window::new("W").pos(vec2(100.0, 100.0)).width(300.0).show(ctx, |ui| {
+                ui.slider(&mut value, 0.0..=1.0);
+                ui.toggle(&mut on, "Toggle");
+                ui.segmented(&mut seg, &["One", "Two", "Three"]);
+            });
+            ctx.end_frame();
+            let d = &ctx.paint.data;
+            let x = |g: usize| d.gshapes[d.glasses[g].shape_start as usize].center[0];
+            (0..d.glasses.len()).map(|g| x(g) - x(0)).collect::<Vec<f32>>()
+        };
+        for i in 0..120 {
+            frame(&mut ctx, i, &[]);
+        }
+        frame(&mut ctx, 120, &[Event::PointerMoved(vec2(200.0, 120.0))]);
+        frame(&mut ctx, 121, &[Event::PointerDown]);
+        for i in 0..40 {
+            // Fast, changing direction.
+            let x = 200.0 + 260.0 * (i as f32 * 0.35).sin().abs();
+            let y = 120.0 + i as f32 * 6.0;
+            offsets.push(frame(&mut ctx, 122 + i, &[Event::PointerMoved(vec2(x, y))]));
+        }
+        assert_eq!(offsets[0].len(), 4, "window, slider, toggle and segmented");
+        for o in &offsets {
+            for (a, b) in o.iter().zip(&offsets[0]) {
+                assert!((a - b).abs() <= 1.01, "{o:?} moved against {:?}", offsets[0]);
+            }
         }
     }
 }

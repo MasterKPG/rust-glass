@@ -65,7 +65,7 @@ impl Spring {
         };
         self.x = target + x;
         self.v = v;
-        let scale = target.abs().max(1.0);
+        let scale = 1.0 + target.abs() * 0.02;
         if x.abs() < 0.0008 * scale && v.abs() < 0.01 * scale {
             self.x = target;
             self.v = 0.0;

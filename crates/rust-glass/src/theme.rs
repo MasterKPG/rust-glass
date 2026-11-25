@@ -8,8 +8,8 @@ pub struct Theme {
     /// Content appearance. Glass adapts to its backdrop on its own.
     pub dark: bool,
     pub accent: Color,
-    /// 0 is the clearest glass, 1 the most frosted. The system wide
-    /// transparency setting of iOS 27.
+    /// 0 is the clearest glass, 1 fully tinted. The system wide transparency
+    /// setting of iOS 27. The material presets are tuned for [`Theme::FROST`].
     pub frost: f32,
     /// Small elements flip between light and dark with the backdrop.
     pub adaptive: bool,
@@ -21,6 +21,7 @@ pub struct Theme {
     pub clear: Material,
     pub thick: Material,
     pub lens: Material,
+    pub blob: Material,
 
     pub control_height: f32,
     pub spacing: f32,
@@ -34,7 +35,7 @@ impl Default for Theme {
         Self {
             dark: false,
             accent: Color::BLUE,
-            frost: 0.0,
+            frost: Theme::FROST,
             adaptive: true,
             reduce_transparency: false,
             reduce_motion: false,
@@ -43,6 +44,7 @@ impl Default for Theme {
             clear: Material::CLEAR,
             thick: Material::THICK,
             lens: Material::LENS,
+            blob: Material::BLOB,
             control_height: 36.0,
             spacing: 10.0,
             body: 14.0,
@@ -53,6 +55,22 @@ impl Default for Theme {
 }
 
 impl Theme {
+    /// Default transparency.
+    pub const FROST: f32 = 0.35;
+
+    /// How far the setting is past the default, 0 to 1.
+    pub fn tinted(&self) -> f32 {
+        if self.reduce_transparency {
+            1.0
+        } else {
+            ((self.frost - Self::FROST) / (1.0 - Self::FROST)).clamp(0.0, 1.0)
+        }
+    }
+
+    /// How milky the blob of a tab bar is: 0 at the clearest setting, 1 at fully tinted.
+    pub fn veil(&self) -> f32 {
+        if self.reduce_transparency { 1.0 } else { self.frost.clamp(0.0, 1.0) * 0.75 }
+    }
     pub fn text(&self) -> Color {
         if self.dark { Color::gray(0.97) } else { Color::gray(0.04) }
     }

@@ -11,3 +11,20 @@ All notable changes are listed here. Format: Keep a Changelog.
 - Components: buttons, slider, switch, segmented control, tab bar, text fields, menus, pickers, progress, toasts, alerts, sheets, windows, scroll area and more.
 - Settings for frost, light and dark, reduced transparency, reduced motion and increased contrast.
 - Showcase app with a live material editor, and headless capture with timings.
+- Preview folder with pictures and two clips, rendered with `--preview`.
+- Tab bar selection lifts into a clear blob that stands proud of the bar, with rainbow caps. It gets milkier towards the tinted end of the transparency setting.
+- Windows open centered and fit the monitor.
+- Image mipmaps, so scaled down pictures stay smooth.
+
+### Changed
+- The light spot under the pointer is gone and the virtual light no longer follows the mouse. A press only brightens the surface evenly and slightly.
+- Edges, rims and masks use a wider anti-aliasing profile, the strongly bent zone at the rim is supersampled, and resting controls sit on whole pixels.
+- Thumbs change shape with acceleration instead of speed and keep their area, fitted to the reference footage.
+- The default transparency sits between ultra clear and tinted.
+- Showcase pages form with a short transition.
+
+### Fixed
+- Sliders, switches and segmented controls stay in place while their window is dragged.
+- The drops of a split button separate completely once open.
+- Menus stay attached to a button that scrolls or moves.
+- Springs no longer jump the last fraction of a point when they settle.
