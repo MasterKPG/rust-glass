@@ -4,6 +4,12 @@ description = "GPU rendered Liquid Glass style UI framework with an immediate mo
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/rust-glass"
+readme = "../../README.md"
+keywords = ["gui", "ui", "glass", "wgpu", "immediate-mode"]
+categories = ["gui", "graphics"]
 
 [dependencies]
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }

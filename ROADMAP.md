@@ -12,7 +12,9 @@ A Rust UI framework whose controls look and move like Liquid Glass on every desk
 Goal: the glass holds up next to the reference footage and covers the components an app needs daily.
 - Glass renderer with adaptive materials
 - Core components and showcase
-- Visual corrections after review
+- Guide and first public release (v0.1.0, 2026-11-25)
+- Published crate with API docs
+- Visual corrections after review (0.1.x)
 
 ### v0.2: Real apps
 Goal: a small app can ship with it.
@@ -31,7 +33,6 @@ Goal: transitions between screens keep glass on one continuous plane.
 Goal: usable outside its own window host.
 - Renderer usable inside an existing wgpu app
 - Web build through WebGPU
-- Published crate with API docs
 
 ## Not planned
 - Building on egui. Its single render pass prevents glass from sampling the widgets below it.

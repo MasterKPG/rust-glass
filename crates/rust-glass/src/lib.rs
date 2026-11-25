@@ -20,6 +20,8 @@
 //!
 //! run(Options::default(), Hello { volume: 0.3 }).unwrap();
 //! ```
+//!
+//! The [`guide`] covers layout, widgets, theming, materials and testing.
 
 pub mod anim;
 pub mod app;
@@ -36,6 +38,9 @@ pub mod text;
 pub mod theme;
 pub mod ui;
 pub mod widgets;
+
+#[doc = include_str!("../GUIDE.md")]
+pub mod guide {}
 
 pub use app::{App, FrameInfo, Options, run};
 pub use color::Color;

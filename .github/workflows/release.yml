@@ -1,0 +1,134 @@
+# Tests every push to main. If the published files changed, picks the next
+# version, commits it, publishes to crates.io and creates a GitHub release.
+#
+# crates.io trusts this workflow by its file name (Trusted Publishing), so no
+# token is stored. See the Releases section of the README.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One at a time. A newer push waits for the release in progress.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      plan: ${{ steps.plan.outputs.plan }}
+      kind: ${{ steps.kind.outputs.kind }}
+    steps:
+      # The newest main, not the commit of the event, so a rerun after a
+      # release continues from there.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Plan
+        id: plan
+        run: |
+          plan=$(python scripts/release.py plan | tr -d '\r')
+          echo "Plan: $plan"
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo package -p rust-glass --locked
+
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        if: steps.plan.outputs.plan == 'bump'
+        with:
+          tool: cargo-semver-checks
+
+      # Breaking changes raise the minor version, everything else the patch.
+      - name: Choose the kind of version
+        id: kind
+        if: steps.plan.outputs.plan == 'bump'
+        run: |
+          if cargo semver-checks -p rust-glass --release-type patch; then kind=patch; else kind=minor; fi
+          echo "Kind: $kind"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: test
+    if: needs.test.outputs.plan != 'none'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # If main moved on meanwhile, the run of that push does the release.
+      - name: Same commit as tested
+        id: same
+        env:
+          TESTED: ${{ needs.test.outputs.sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$TESTED" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main moved on, the next run releases it"
+          fi
+
+      - name: Raise the version
+        if: steps.same.outputs.go == 'true' && needs.test.outputs.plan == 'bump'
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+        run: |
+          git config user.name "$(git log -1 --format=%an)"
+          git config user.email "$(git log -1 --format=%ae)"
+          version=$(python3 scripts/release.py bump "$KIND")
+          git commit -am "Release v$version"
+          git push origin HEAD:main
+
+      - name: Check crates.io
+        id: crate
+        if: steps.same.outputs.go == 'true'
+        run: |
+          if python3 scripts/release.py published; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+        if: steps.crate.outputs.published == 'false'
+
+      # Built and tested above. Not verifying again keeps build scripts away
+      # from the token.
+      - name: Publish
+        if: steps.crate.outputs.published == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish -p rust-glass --locked --no-verify
+
+      - name: GitHub release
+        if: steps.same.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 scripts/release.py version)
+          python3 scripts/release.py notes > "$RUNNER_TEMP/notes.md"
+          gh release view "v$version" > /dev/null 2>&1 || gh release create "v$version" \
+            --target "$(git rev-parse HEAD)" --title "v$version" --notes-file "$RUNNER_TEMP/notes.md"

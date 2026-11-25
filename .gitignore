@@ -2,6 +2,9 @@
 /target/
 **/*.rs.bk
 
+# Python
+__pycache__/
+
 # Local agent files
 CLAUDE.md
 CLAUDE.local.md

@@ -4,7 +4,14 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-25
+
+First public release.
+
 ### Added
+- Guide on how to build an app, also part of the API docs. Its examples are compiled by the tests.
+- License: MIT or Apache-2.0, at your option.
+- Published on crates.io. Later versions are released from pushes to main.
 - Glass material with refraction, dispersion, variable blur, adaptive tint, rim light, inner glow and color carrying shadow. Presets: regular, clear, thick, lens.
 - Renderer on wgpu where glass refracts everything drawn below it, including other glass.
 - Immediate mode layout, input routing with layers, keyboard focus and spring animation.
@@ -30,3 +37,6 @@ All notable changes are listed here. Format: Keep a Changelog.
 - The drops of a split button separate completely once open.
 - Menus stay attached to a button that scrolls or moves.
 - Springs no longer jump the last fraction of a point when they settle.
+
+[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/MasterKPG/rust-glass/releases/tag/v0.1.0

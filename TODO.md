@@ -20,6 +20,8 @@ Short-term work. Long-term plan lives in [ROADMAP.md](ROADMAP.md).
 - [ ] Image tests against stored reference renders
 
 ## Done (recent)
+- [x] Public repository, license, guide, v0.1.0 on crates.io and GitHub (2026-11-25)
+- [x] Releases from pushes to main (2026-11-25)
 - [x] Renderer, material, springs, text, input and layout (2026-11-25)
 - [x] First set of components (2026-11-25)
 - [x] Showcase with live material editor (2026-11-25)
