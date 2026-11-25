@@ -45,7 +45,7 @@ Needs Rust 1.90 or newer and a GPU with Vulkan, DirectX 12 or Metal.
 cargo add rust-glass
 ```
 
-The API docs are on [docs.rs](https://docs.rs/rust-glass). To follow the main branch instead of the releases, use `cargo add rust-glass --git https://github.com/MasterKPG/rust-glass`.
+The API docs are on [docs.rs](https://docs.rs/rust-glass). For the version in development, use `cargo add rust-glass --git https://github.com/MasterKPG/rust-glass --branch dev`.
 
 ## Usage
 
@@ -134,7 +134,7 @@ preview/       pictures of the showcase
 
 ## Releases
 
-A push to main that changes the crate or this README is tested, versioned and published by a [workflow](https://github.com/MasterKPG/rust-glass/blob/main/.github/workflows/release.yml). Breaking changes, found by cargo-semver-checks, raise the minor version and everything else the patch. The workflow commits the new version, turns the Unreleased section of the [changelog](https://github.com/MasterKPG/rust-glass/blob/main/CHANGELOG.md) into the release notes, publishes to [crates.io](https://crates.io/crates/rust-glass) and creates a [GitHub release](https://github.com/MasterKPG/rust-glass/releases). To choose a version by hand, set it in `Cargo.toml` and name the changelog section after it.
+Work happens on the dev branch, where every push is tested. Merging dev into main makes a release: if the crate or this README changed, main is tested, versioned and published by a [workflow](https://github.com/MasterKPG/rust-glass/blob/main/.github/workflows/release.yml). Breaking changes, found by cargo-semver-checks, raise the minor version and everything else the patch. The workflow commits the new version, turns the Unreleased section of the [changelog](https://github.com/MasterKPG/rust-glass/blob/main/CHANGELOG.md) into the release notes, publishes to [crates.io](https://crates.io/crates/rust-glass), creates a [GitHub release](https://github.com/MasterKPG/rust-glass/releases) and brings dev up to date. To choose a version by hand, set it in `Cargo.toml` and name the changelog section after it.
 
 ## Status
 

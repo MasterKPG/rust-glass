@@ -4,6 +4,9 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+### Changed
+- Development moved to the dev branch. Merging it into main makes a release.
+
 ## [0.1.0] - 2026-11-25
 
 First public release.

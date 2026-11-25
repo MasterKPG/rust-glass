@@ -132,3 +132,22 @@ jobs:
           python3 scripts/release.py notes > "$RUNNER_TEMP/notes.md"
           gh release view "v$version" > /dev/null 2>&1 || gh release create "v$version" \
             --target "$(git rev-parse HEAD)" --title "v$version" --notes-file "$RUNNER_TEMP/notes.md"
+
+      # dev gets the version commit, so work goes on from the release.
+      - name: Update dev
+        if: steps.same.outputs.go == 'true'
+        run: |
+          git fetch origin dev || exit 0
+          main=$(git rev-parse HEAD)
+          if git merge-base --is-ancestor origin/dev "$main"; then
+            git push origin "$main:refs/heads/dev"
+          else
+            git config user.name "$(git log -1 --format=%an)"
+            git config user.email "$(git log -1 --format=%ae)"
+            git checkout -q -B dev origin/dev
+            if git merge "$main" -m "Merge the release into dev"; then
+              git push origin dev
+            else
+              echo "::warning::main does not merge cleanly into dev, merge it by hand"
+            fi
+          fi
