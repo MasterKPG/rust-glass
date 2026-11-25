@@ -1,7 +1,7 @@
 //! The glass material: parameters, presets and how they adapt to the backdrop.
 
 use crate::color::Color;
-use crate::geom::{Rect, Vec2, lerp};
+use crate::geom::{Rect, Vec2, lerp, vec2};
 
 /// Corner shape. Rounded corners are continuous (curvature ramps up instead of
 /// jumping), capsules are slightly squared off the way iOS draws them.
@@ -9,6 +9,12 @@ use crate::geom::{Rect, Vec2, lerp};
 pub enum Corner {
     Radius(f32),
     Capsule,
+    /// A capsule of size `base` scaled to the size of the rectangle, each axis on
+    /// its own. `power` above 2 squares the shoulders off.
+    Stretched {
+        base: Vec2,
+        power: f32,
+    },
     /// True circle or stadium, without smoothing.
     Round(f32),
 }
@@ -31,6 +37,10 @@ impl Corner {
                 // Nearly square shapes stay circles.
                 let k = ((size.x.max(size.y) / size.x.min(size.y).max(0.1)) - 1.0).clamp(0.0, 0.3) / 0.3;
                 (half.lerp(r, k), lerp(2.0, 2.18, k))
+            }
+            Corner::Stretched { base, power } => {
+                let (r, _) = Corner::Capsule.resolve(base);
+                (vec2(r.x * size.x / base.x.max(0.1), r.y * size.y / base.y.max(0.1)), power)
             }
             Corner::Radius(r) => {
                 // A superellipse of extent 1.35r and exponent 2.83 touches a
@@ -63,6 +73,9 @@ pub struct Material {
     pub sideways: f32,
     /// Chromatic aberration, as a fraction of the bend.
     pub chroma: f32,
+    /// 0 disperses evenly around the outline. At 1 only the corners do, with
+    /// the order of the colors alternating from corner to corner.
+    pub corner_chroma: f32,
     pub blur: f32,
     pub magnify: f32,
     /// Backdrop range mapping on a bright backdrop.
@@ -105,6 +118,7 @@ impl Material {
         pinch_width: 20.0,
         sideways: 0.0,
         chroma: 0.10,
+        corner_chroma: 0.0,
         blur: 4.2,
         magnify: 1.0,
         light_range: (0.62, 1.0),
@@ -189,16 +203,17 @@ impl Material {
     };
 
     /// The selection of a tab bar while touched: a clear blob that stands proud
-    /// of the bar, with a white outline and rainbow caps.
+    /// of the bar. A thin rim shows the bar from further inside, the wide zone
+    /// behind it pulls the edge of the bar inwards.
     pub const BLOB: Material = Material {
-        refraction: 23.0,
-        depth: 16.0,
-        outer_refraction: 7.0,
-        outer_depth: 2.2,
-        pinch: 4.0,
-        pinch_width: 18.0,
-        sideways: 0.82,
-        chroma: 0.34,
+        refraction: 20.0,
+        depth: 3.5,
+        outer_refraction: 0.0,
+        outer_depth: 2.0,
+        pinch: 4.1,
+        pinch_width: 20.0,
+        chroma: 0.75,
+        corner_chroma: 1.0,
         light_range: (0.0, 1.0),
         dark_range: (0.0, 1.0),
         saturation: 1.05,
@@ -213,6 +228,21 @@ impl Material {
         shadow_y: 5.0,
         shadow_tint: 0.2,
         ..Material::LENS
+    };
+
+    /// Bends the labels under a blob: near the outline they smear inwards.
+    pub const BLOB_LABELS: Material = Material {
+        refraction: 23.0,
+        depth: 16.0,
+        outer_refraction: 0.0,
+        pinch: 0.0,
+        sideways: 0.5,
+        chroma: 0.18,
+        corner_chroma: 0.0,
+        saturation: 1.0,
+        inner_glow: 0.0,
+        shadow: 0.0,
+        ..Material::BLOB
     };
 
     pub fn tinted(mut self, c: Color) -> Self {
@@ -247,6 +277,7 @@ impl Material {
             pinch_width: l(self.pinch_width, o.pinch_width),
             sideways: l(self.sideways, o.sideways),
             chroma: l(self.chroma, o.chroma),
+            corner_chroma: l(self.corner_chroma, o.corner_chroma),
             blur: l(self.blur, o.blur),
             magnify: l(self.magnify, o.magnify),
             light_range: l2(self.light_range, o.light_range),

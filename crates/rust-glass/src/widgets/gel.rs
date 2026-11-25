@@ -103,18 +103,34 @@ pub struct Droplet {
 #[derive(Clone, Copy, Debug)]
 pub struct DropletFrame {
     pub size: Vec2,
+    /// Size without the stretch.
+    pub base: Vec2,
     pub lift: f32,
     pub bend: f32,
     /// Not moving and not lifted.
     pub at_rest: bool,
 }
 
-/// Fitted to the reference footage: the width follows the acceleration through
-/// a spring of 10 rad/s and damping 0.5, saturates at 16 percent, and the area
-/// stays constant.
-const CHASE: Tuning = Tuning::new(0.628, 0.5);
-const STRETCH: f32 = 0.159;
-const STRETCH_AT: f32 = 2.4;
+/// How a droplet gives way to acceleration.
+#[derive(Clone, Copy, Debug)]
+pub struct Flex {
+    /// Smooths the acceleration.
+    pub chase: Tuning,
+    /// Change of the height at the limit.
+    pub amount: f32,
+    /// Acceleration that reaches three quarters of the limit, in 1000 points
+    /// per second squared.
+    pub at: f32,
+    /// Part of the change the width takes on. 1 keeps the area.
+    pub width: f32,
+}
+
+impl Flex {
+    /// Thumbs, fitted to the reference footage.
+    pub const THUMB: Flex = Flex { chase: Tuning::new(0.628, 0.5), amount: 0.159, at: 2.4, width: 1.0 };
+    /// The blob of a tab bar: softer, and the width gives less than the height.
+    pub const BLOB: Flex = Flex { chase: Tuning::new(1.227, 0.625), amount: 0.219, at: 2.3, width: 0.6 };
+}
 
 impl Droplet {
     /// `raised` keeps the droplet lifted. `rest` and `lifted` are its sizes.
@@ -127,6 +143,23 @@ impl Droplet {
         rest: Vec2,
         lifted: Vec2,
     ) -> DropletFrame {
+        // Larger controls travel further for the same feel.
+        let k = (rest.y / 24.0).clamp(1.0, 3.0);
+        let flex = Flex { at: Flex::THUMB.at * k, ..Flex::THUMB };
+        self.step_flex(ctx, target, follow, raised, rest, lifted, flex)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn step_flex(
+        &mut self,
+        ctx: &mut Context,
+        target: f32,
+        follow: Tuning,
+        raised: bool,
+        rest: Vec2,
+        lifted: Vec2,
+        flex: Flex,
+    ) -> DropletFrame {
         let dt = ctx.dt;
         let follow = ctx.tune(follow);
         let mut moving = self.pos.step(target, follow, dt);
@@ -135,19 +168,18 @@ impl Droplet {
         let up = raised || (far && self.lift.x > 0.3);
         let t = if up { Tuning::new(0.27, 0.72) } else { Tuning::new(0.36, 0.76) };
         moving |= self.lift.step(up as u32 as f32, ctx.tune(t), dt);
-        moving |= self.chase.step(self.pos.v, CHASE, dt);
+        moving |= self.chase.step(self.pos.v, flex.chase, dt);
         if moving {
             ctx.request_repaint();
         }
         let lift = self.lift.x.max(0.0);
-        // Larger controls travel further for the same feel.
-        let k = (rest.y / 24.0).clamp(1.0, 3.0);
-        let u = self.chase.v / 1000.0 / k;
-        let s = if ctx.theme.reduce_motion { 0.0 } else { STRETCH * (u / STRETCH_AT).tanh() };
+        let u = self.chase.v / 1000.0;
+        let s = if ctx.theme.reduce_motion { 0.0 } else { flex.amount * (u / flex.at).tanh() };
         let base = rest.lerp(lifted, lift);
         let w = 1.0 + s * (0.2 + 0.8 * lift.min(1.0));
         DropletFrame {
-            size: vec2(base.x * w, base.y / w),
+            size: vec2(base.x * w.powf(flex.width), base.y / w),
+            base,
             lift,
             bend: (self.pos.v / 1800.0).clamp(-0.35, 0.35),
             at_rest: !moving && !raised,
@@ -251,6 +283,30 @@ mod tests {
         let min = w.iter().cloned().fold(1e9, f32::min);
         assert!(max > 52.0 && min < 48.0, "{min} {max}");
         assert!(max < 50.0 * 1.17 && min > 50.0 * 0.83);
+    }
+
+    #[test]
+    fn blob_gives_more_in_height_than_in_width() {
+        let mut ctx = Context::new();
+        let mut d = Droplet::default();
+        let lifted = vec2(104.0, 72.4);
+        let (mut lo, mut hi) = (lifted, lifted);
+        for i in 0..360 {
+            let t = i as f32 / 60.0;
+            ctx.begin_frame(vec2(800.0, 200.0), 1.0, t as f64, &[] as &[Event]);
+            let x = 200.0 + 150.0 * (t * 3.5).sin();
+            let f =
+                d.step_flex(&mut ctx, x, Tuning::new(0.14, 0.88), true, vec2(86.0, 54.0), lifted, Flex::BLOB);
+            ctx.end_frame();
+            if i > 120 {
+                lo = lo.min(f.size);
+                hi = hi.max(f.size);
+            }
+        }
+        // The extremes of the reference clip are 96 to 113 wide and 63 to 84 high.
+        assert!(lo.x > 90.0 && hi.x < 116.0, "{lo:?} {hi:?}");
+        assert!(lo.y > 58.0 && hi.y < 94.0, "{lo:?} {hi:?}");
+        assert!(hi.y - lo.y > hi.x - lo.x, "{lo:?} {hi:?}");
     }
 
     #[test]

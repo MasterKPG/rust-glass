@@ -6,11 +6,17 @@ A GPU rendered UI framework for Rust in the style of Apple's Liquid Glass. Contr
 
 ![Material lab with a thick lens over ribbons](preview/lab-lens.jpg)
 
-The selection of a tab bar lifts into a clear blob, and a button splits into drops:
+The selection of a tab bar lifts into a clear blob:
 
 ![Dragging the tab bar selection](preview/tabs.gif)
 
-![A button splitting into drops](preview/split.gif)
+The thumb of a slider lifts into a lens and changes shape with acceleration:
+
+![Dragging a slider](preview/slider.gif)
+
+The + button splits into drops that pull apart and fuse again:
+
+![The + button splitting into drops](preview/split.gif)
 
 More pictures are in the [preview](preview) folder: [player](preview/player.jpg), [dark player](preview/player-dark.jpg), [buttons](preview/buttons.jpg), [sliders and switches](preview/sliders.jpg), [segments and tabs](preview/segments.jpg), [text fields](preview/fields.jpg), [menus](preview/menu.jpg), [feedback](preview/feedback.jpg), [windows](preview/windows.jpg), [settings](preview/settings.jpg), and the lab on [regular](preview/lab-regular.jpg) and [thick](preview/lab-thick.jpg) glass and over a [test grid](preview/lab-grid.jpg).
 
@@ -22,7 +28,7 @@ More pictures are in the [preview](preview) folder: [player](preview/player.jpg)
 - Shapes in one element fuse like drops of liquid
 - Every motion is a closed form spring: interruptible and independent of the frame rate
 - Press response that swells and stretches towards the finger
-- Slider, switch and tab bar thumbs lift into lenses whose shape follows acceleration, with constant area
+- Slider, switch and tab bar thumbs lift into lenses whose shape follows acceleration
 - A transparency setting from ultra clear to tinted that also controls how clear the lifted lenses are, plus reduced transparency, reduced motion and increased contrast
 - Keyboard focus and operation for the interactive controls
 - Draws only on change. An idle window uses no CPU

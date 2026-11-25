@@ -10,7 +10,7 @@ use crate::material::{Corner, Glass};
 use crate::paint::Feather;
 use crate::text::{TextStyle, Weight};
 use crate::ui::{Ui, Widget};
-use crate::widgets::gel::{droplet_glass, droplet_rect, droplet_state, rubber, set_droplet};
+use crate::widgets::gel::{Flex, droplet_glass, droplet_rect, droplet_state, rubber, set_droplet};
 
 /// Pick one of a few options. The selected label is drawn inside the thumb and
 /// seen through it, so it bends and splits at the rim while the thumb moves.
@@ -337,7 +337,7 @@ impl TabBar<'_> {
         let pitch = 77.0;
         let pill = vec2(86.0, 54.0);
         let pad = 4.0;
-        let blob = vec2(98.0, 80.0);
+        let blob = vec2(104.0, 72.4);
         let size = vec2(pitch * (n - 1) as f32, 0.0) + pill + Vec2::splat(pad * 2.0);
         let bar = Rect::from_center_size(center, size).snap(ctx.ppp);
         let center = bar.center();
@@ -374,7 +374,7 @@ impl TabBar<'_> {
         let target = dragged.unwrap_or(at(*self.selected));
         let follow =
             if dragged.is_some() && !r.pressed { Tuning::new(0.14, 0.88) } else { Tuning::new(0.38, 0.80) };
-        let f = d.step(ctx, target, follow, r.held, pill, blob);
+        let f = d.step_flex(ctx, target, follow, r.held, pill, blob, Flex::BLOB);
         set_droplet(ctx, id, d);
         let lift = f.lift.clamp(0.0, 1.0);
 
@@ -385,6 +385,8 @@ impl TabBar<'_> {
         let body = if press > 0.0 { bar.scale_from_center(sx, sy) } else { bar };
         let to_x = |x: f32| center.x + (x - size.x * 0.5) * sx;
         let drop = droplet_rect(ctx, vec2(to_x(d.pos.x), center.y), &f);
+        // Squeezed as a whole, so a tall blob keeps its flat top and bottom.
+        let round = Corner::Stretched { base: f.base, power: lerp(2.18, 2.3, lift) };
 
         let mut g = Glass::new(body, Corner::Capsule, ctx.theme.regular);
         let a = ctx.prepare_glass(id, &mut g, true);
@@ -400,16 +402,24 @@ impl TabBar<'_> {
         m.pinch *= 1.0 - 0.6 * veil;
         m.chroma *= 1.0 - 0.7 * veil;
         m.inner_glow += 0.10 * veil;
-        let mut lens = Glass::new(drop, Corner::Capsule, m).presence(lift);
+        let mut lens = Glass::new(drop, round, m).presence(lift);
         lens.light_bend = f.bend;
+        // The labels bend on their own, and only over the bar: the caps that
+        // stand proud of it belong to the lens.
+        let mut m = ctx.theme.blob_labels;
+        m.refraction *= 1.0 - 0.55 * veil;
+        m.chroma *= 1.0 - 0.7 * veil;
+        let mut warp = Glass::new(drop, round, m).presence(lift);
+        warp.light_bend = f.bend;
+        let inside = body.expand(-3.5);
         let milk = Color::WHITE.lerp(Color::gray(0.30), a.dark).alpha(0.85 * veil * lift);
         let small = TextStyle::new(10.5).weight(Weight::Semibold);
         let labels: Vec<_> = self.tabs.iter().map(|t| ctx.text.layout(t.1, &small)).collect();
 
         let mut p = ctx.painter(layer, Rect::EVERYTHING);
         p.glass(&g);
-        p.fill(drop, Corner::Capsule, s.fill_strong().fade((1.0 - lift * 1.5).max(0.0) * 0.8));
-        p.fill(drop, Corner::Capsule, milk);
+        p.fill(drop, round, s.fill_strong().fade((1.0 - lift * 1.5).max(0.0) * 0.8));
+        p.fill(drop, round, milk);
         let draw = |p: &mut crate::paint::Painter, c: Color, k: f32| {
             for (i, label) in labels.iter().enumerate() {
                 let m = vec2(to_x(at(i)), center.y);
@@ -418,11 +428,18 @@ impl TabBar<'_> {
                 p.text_centered(lr, label, c, k);
             }
         };
-        let out = p.add_mask(drop, Corner::Capsule, true, Feather::default());
+        let out = p.add_mask(drop, round, true, Feather::default());
         p.with_mask(out, |p| draw(p, s.text(), 1.0));
-        let inm = p.add_mask(drop, Corner::Capsule, false, Feather::default());
-        p.with_mask(inm, |p| draw(p, accent, 1.0 + 0.18 * lift));
         p.glass(&lens);
+        let inm = p.add_mask(drop, round, false, Feather::default());
+        p.with_mask(inm, |p| draw(p, accent, 1.0 + 0.18 * lift));
+        let over = p.add_mask(
+            inside,
+            Corner::Capsule,
+            false,
+            Feather { left: 6.0, top: 6.0, right: 6.0, bottom: 6.0 },
+        );
+        p.with_mask(over, |p| p.glass(&warp));
         if ctx.shows_focus(id) {
             let mut p = ctx.painter(layer, Rect::EVERYTHING);
             p.stroke(body.expand(3.5), Corner::Capsule, 2.5, accent);

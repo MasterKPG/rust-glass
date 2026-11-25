@@ -479,7 +479,7 @@ impl Painter<'_> {
         let inst = GlassInst {
             bounds: self.px(bounds.expand(grow + g.fuse * 0.3)),
             clip: self.px(self.clip),
-            tint: [m.sideways, 0.0, 0.0, m.tint_follow],
+            tint: [m.sideways, m.corner_chroma, 0.0, m.tint_follow],
             shape_start: start,
             shape_count: g.shapes.len() as u32,
             mask: self.mask,

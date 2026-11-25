@@ -10,7 +10,8 @@
 struct Glass {
     bounds: vec4f,
     clip: vec4f,
-    // x: 0 bends equally in all directions, 1 only sideways. w: tint follow.
+    // x: 0 bends equally in all directions, 1 only sideways.
+    // y: 0 disperses evenly, 1 only in the corners. w: tint follow.
     tint: vec4f,
     shape_start: u32,
     shape_count: u32,
@@ -133,12 +134,14 @@ fn bevel(t: f32) -> f32 {
 }
 
 // Displacement along the outward normal at `depth` pixels below the outline.
-fn lens(g: Glass, depth: f32, side: f32) -> f32 {
+// `w` widens the curved part for one color.
+fn lens(g: Glass, depth: f32, side: f32, w: f32) -> f32 {
+    let wide = clamp(1.0 + 1.5 * w, 0.4, 3.0);
     var d = g.outer_amount * bevel(depth / max(g.outer_height, 0.5))
-        - g.inner_amount * mix(1.0, side, g.tint.x) * bevel(depth / max(g.inner_height, 0.5));
+        - g.inner_amount * mix(1.0, side, g.tint.x) * bevel(depth / max(g.inner_height * wide, 0.5));
     if (g.pinch > 0.0) {
         let h = sin(3.14159265 * clamp(depth / max(g.pinch_width, 1.0), 0.0, 1.0));
-        d += g.pinch * mix(1.0, 1.0 - side, g.tint.x) * h * h;
+        d += g.pinch * (1.0 + 0.3 * w) * mix(1.0, 1.0 - side, g.tint.x) * h * h;
     }
     return d;
 }
@@ -238,28 +241,33 @@ fn fs(in: VOut) -> @location(0) vec4f {
         let far = max(-facing, 0.0);
 
         // Lens. Dispersion flips on the far side, where light leaves the body.
-        let chroma = g.chroma * mix(1.0, -0.55, smoothstep(0.0, 0.5, far));
+        let even = mix(1.0, -0.55, smoothstep(0.0, 0.5, far));
+        let chroma = g.chroma * even * (1.0 - g.tint.y);
+        let corner = g.chroma * 2.0 * n.x * n.y * g.tint.y;
         let base = g.origin + (p - g.origin) / max(g.magnify, 0.05);
         let side = n.x * n.x * n.x * n.x;
-        let shift = lens(g, depth, side);
+        let shift = lens(g, depth, side, 0.0);
         // How many backdrop pixels one screen pixel covers along the normal.
         // Near the rim this grows quickly, so those pixels are supersampled.
-        let foot = abs(1.0 - lens(g, depth + 0.5, side) + lens(g, max(depth - 0.5, 0.0), side));
+        let foot = abs(1.0 - lens(g, depth + 0.5, side, 0.0) + lens(g, max(depth - 0.5, 0.0), side, 0.0));
         // The rim of real glass stays clearer than its body.
         var blur = g.blur * mix(0.45, 1.0, smoothstep(0.0, max(g.inner_height, 1.0), depth));
 
         var c: vec3f;
-        let spread = abs(shift * chroma);
+        let spread = abs(shift * chroma) + abs(corner) * 4.0 * step(depth, max(g.pinch_width, g.inner_height));
         if (blur < 3.0 && (spread > 0.35 || foot > 1.3)) {
             var sum = vec3f(0.0);
             var wsum = vec3f(0.0);
             let rr = max(select(blur, 0.0, blur < 1.2), min(foot * 0.09, 2.0));
-            for (var i = 0; i < 8; i++) {
-                let t = (f32(i) + 0.5) / 8.0;
+            // Wide rainbows need more steps to stay smooth.
+            let steps = select(8, 16, abs(corner) > 0.1);
+            for (var i = 0; i < steps; i++) {
+                let t = (f32(i) + 0.5) / f32(steps);
                 // Wavelength and sub pixel depth run through different orders.
-                let sub = (f32((i * 5 + 2) % 8) + 0.5) / 8.0 - 0.5;
+                let sub = (f32((i * 5 + 2) % steps) + 0.5) / f32(steps) - 0.5;
                 let w = max(vec3f(1.0) - abs(vec3f(t) - vec3f(0.0, 0.5, 1.0)) * 1.9, vec3f(0.0));
-                let k = lens(g, max(depth + sub, 0.0), side) * (1.0 + chroma * (1.0 - 2.0 * t)) - sub;
+                let hue = 1.0 - 2.0 * t;
+                let k = lens(g, max(depth + sub, 0.0), side, corner * hue) * (1.0 + chroma * hue) - sub;
                 sum += sample_bg(base + n * k, rr) * w;
                 wsum += w;
             }

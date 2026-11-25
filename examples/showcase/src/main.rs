@@ -402,11 +402,32 @@ fn preview(dir: &str) -> Result<(), String> {
         "split",
         &mut |i| match i {
             0 => mv(300.0, 617.0),
-            8 | 90 => down(),
-            12 | 94 => up(),
+            12 | 86 | 140 | 158 => down(),
+            18 | 92 | 144 | 162 => up(),
             _ => vec![],
         },
-        150,
+        210,
+    )?;
+    go(&mut hl, &mut app, 2, 2);
+    let keys = [504.0f32, 660.0, 350.0, 600.0, 440.0, 504.0];
+    clip(
+        &mut hl,
+        &mut app,
+        "slider",
+        &mut |i| {
+            let t = (i as f32 - 36.0) / 32.0;
+            let k = (t.max(0.0) as usize).min(keys.len() - 2);
+            let x = keys[k] + (keys[k + 1] - keys[k]) * ease((t - k as f32).clamp(0.0, 1.0));
+            let mut e = mv(if t < 0.0 { keys[0] } else { x }, 286.0);
+            if i == 10 {
+                e.push(Event::PointerDown);
+            }
+            if i == 222 {
+                e.push(Event::PointerUp);
+            }
+            e
+        },
+        270,
     )?;
     Ok(())
 }

@@ -22,6 +22,7 @@ pub struct Theme {
     pub thick: Material,
     pub lens: Material,
     pub blob: Material,
+    pub blob_labels: Material,
 
     pub control_height: f32,
     pub spacing: f32,
@@ -45,6 +46,7 @@ impl Default for Theme {
             thick: Material::THICK,
             lens: Material::LENS,
             blob: Material::BLOB,
+            blob_labels: Material::BLOB_LABELS,
             control_height: 36.0,
             spacing: 10.0,
             body: 14.0,
