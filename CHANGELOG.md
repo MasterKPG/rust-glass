@@ -5,6 +5,8 @@ All notable changes are listed here. Format: Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- `Painter::blur` blurs what is already painted in a rectangle, and `Material::blur` is the glass behind it.
+- Menus, popups, alerts and sheets bring their content into focus as they form, instead of only fading it in.
 - A mask added while another is active is combined with it. A segmented control or tab bar inside a scroll area now fades at its edge like everything else.
 - `Context::remove_image` frees an image.
 - API docs for every public item. Pushes to dev fail when the docs have warnings.

@@ -9,6 +9,7 @@ use crate::material::{Corner, Glass};
 use crate::text::TextStyle;
 use crate::ui::Ui;
 use crate::widgets::button::{Button, ButtonKind};
+use crate::widgets::popup::BLUR_WHILE_FORMING;
 use crate::widgets::press::rubber_band;
 
 /// Alert in the middle of the window. Returns the index of the clicked button.
@@ -92,6 +93,8 @@ pub fn modal(ctx: &mut Context, id: Id, open: &mut bool, width: f32, f: impl FnO
     ui.enabled = *open;
     f(&mut ui);
     let used = ui.used().height() + 40.0;
+    let blur = BLUR_WHILE_FORMING * (1.0 - smoothstep(0.35, 1.0, k));
+    ctx.painter(layer, screen).blur(r.shrink(2.0), 28.0, blur);
     if (used - s.h).abs() > 0.5 {
         s.h = used;
         ctx.request_relayout();
@@ -163,6 +166,12 @@ pub fn sheet(ctx: &mut Context, id: Id, open: &mut bool, width: f32, height: f32
     ui.surface = a.surface();
     ui.clip = body;
     f(&mut ui);
+    // The content comes into focus as the sheet arrives, but stays sharp
+    // while the sheet is dragged.
+    if s.drag == 0.0 {
+        let blur = BLUR_WHILE_FORMING * (1.0 - smoothstep(0.5, 1.0, k));
+        ctx.painter(layer, screen).blur(body.shrink(2.0), 32.0, blur);
+    }
     ctx.set(id, s);
     if *open && ctx.input.take_key(Key::Escape) {
         *open = false;

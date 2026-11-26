@@ -94,6 +94,10 @@ pub fn popup(ctx: &mut Context, id: Id, anchor: Rect, width: f32, f: impl FnOnce
         ui.spacing = 2.0;
         f(&mut ui);
         used = vec2(width, ui.used().height() + 16.0);
+        // The content comes into focus as the bubble opens.
+        let blur = BLUR_WHILE_FORMING * (1.0 - smoothstep(0.30, 0.95, t));
+        let inside = Corner::Radius((radius - 1.0).max(0.0));
+        ctx.painter(layer, Rect::EVERYTHING).blur(clip, inside, blur);
     }
     if (used - s.size).length() > 0.5 {
         s.size = used;
@@ -108,6 +112,9 @@ pub fn popup(ctx: &mut Context, id: Id, anchor: Rect, width: f32, f: impl FnOnce
         }
     }
 }
+
+/// Blur radius of the content of an overlay that has just started to form.
+pub(crate) const BLUR_WHILE_FORMING: f32 = 10.0;
 
 /// Below the anchor if it fits, otherwise above, always inside the screen.
 fn place(anchor: Rect, size: Vec2, screen: Rect) -> Rect {

@@ -191,17 +191,23 @@ pub fn pages(dir: &str) -> Result<(), String> {
 
     rig.open(Page::Feedback, PETALS);
     rig.click(rig.mark("alert button"));
-    rig.wait(60);
+    rig.wait(9);
+    shot(&mut rig, "alert_forming")?;
+    rig.wait(51);
     shot(&mut rig, "alert")?;
 
     rig.open(Page::Feedback, PETALS);
     rig.click(rig.mark("toast button"));
     rig.wait(50);
     shot(&mut rig, "toast")?;
+    // Let the toast leave before the next shot.
+    rig.settle(3.0);
 
     rig.open(Page::Windows, AURORA);
     rig.click(rig.mark("sheet button"));
-    rig.wait(70);
+    rig.wait(10);
+    shot(&mut rig, "sheet_forming")?;
+    rig.wait(60);
     shot(&mut rig, "sheet")?;
 
     rig.open(Page::Lists, PETALS);

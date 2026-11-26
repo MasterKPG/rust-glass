@@ -474,6 +474,28 @@ impl Painter<'_> {
         self.push(s, ANY_IMAGE);
     }
 
+    /// Blurs what is already painted under `rect` by `radius` points, on
+    /// this layer and below. Use it to soften content while it appears or
+    /// disappears. A radius below half a point does nothing.
+    ///
+    /// ```
+    /// # use rust_glass::prelude::*;
+    /// # fn f(ui: &mut Ui, appear: f32) {
+    /// let rect = ui.allocate(vec2(200.0, 80.0));
+    /// ui.label("Fading in");
+    /// // Sharp once `appear` reaches 1.
+    /// ui.painter().blur(rect, 12.0, 10.0 * (1.0 - appear));
+    /// # }
+    /// ```
+    pub fn blur(&mut self, rect: Rect, corner: impl Into<Corner>, radius: f32) {
+        if radius < 0.5 {
+            return;
+        }
+        let opacity = std::mem::replace(&mut self.opacity, 1.0);
+        self.glass(&Glass::new(rect, corner, Material::blur(radius)));
+        self.opacity = opacity;
+    }
+
     /// Paints a glass element. It bends and blurs everything painted before
     /// it, on this layer and below.
     pub fn glass(&mut self, g: &Glass) {
@@ -533,7 +555,8 @@ impl Painter<'_> {
         let bounds = g.bounds();
         let grow = m.shadow_radius * 2.0 + m.shadow_y.abs() + 3.0;
         let shadow = (m.shadow * (1.0 + g.shadow_boost)).min(0.6);
-        let hc = if self.paint.increase_contrast { 0.5 } else { 0.0 };
+        // Stronger edges, except on glass that has no edge at all.
+        let hc = if self.paint.increase_contrast && m.rim > 0.0 { 0.5 } else { 0.0 };
         let c = bounds.center();
         let inst = GlassInst {
             bounds: self.px(bounds.expand(grow + g.fuse * 0.3)),

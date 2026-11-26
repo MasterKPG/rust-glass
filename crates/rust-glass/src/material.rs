@@ -279,6 +279,38 @@ impl Material {
         ..Material::BLOB
     };
 
+    /// Glass that only blurs: no bend, edge, light, shadow or tint. See
+    /// [`Painter::blur`](crate::Painter::blur).
+    pub fn blur(radius: f32) -> Material {
+        Material {
+            refraction: 0.0,
+            depth: 0.1,
+            outer_refraction: 0.0,
+            outer_depth: 0.1,
+            pinch: 0.0,
+            dispersion: 0.0,
+            corner_dispersion: 0.0,
+            blur: radius,
+            magnify: 1.0,
+            light_range: (0.0, 1.0),
+            dark_range: (0.0, 1.0),
+            saturation: 1.0,
+            rim: 0.0,
+            rim_base: 0.0,
+            dark_edge: 0.0,
+            light_spill: 0.0,
+            inner_glow: 0.0,
+            inner_shadow: 0.0,
+            shadow: 0.0,
+            shadow_radius: 0.0,
+            shadow_y: 0.0,
+            shadow_tint: 0.0,
+            tint: None,
+            glass_tint_response: 0.0,
+            ..Material::REGULAR
+        }
+    }
+
     /// Returns the material colored with `color`. Its alpha is the strength.
     pub fn tinted(mut self, color: Color) -> Self {
         self.tint = Some(color);
