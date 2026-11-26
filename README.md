@@ -24,6 +24,7 @@ More pictures are in the [preview folder](https://github.com/MasterKPG/rust-glas
 - Small glass elements measure what is behind them and switch between light and dark
 - Shapes of one element fuse like drops of liquid
 - All motion runs on springs, so it can be interrupted at any time and looks the same at any frame rate
+- Elements morph from one view into another, and content comes into focus as menus, dialogs and pages appear
 - Settings for glass tint, reduced transparency, reduced motion and increased contrast
 - Keyboard focus, and screen reader support through [AccessKit](https://accesskit.dev)
 - Scrolling on one or two axes, and lists of any length that only lay out the visible rows
@@ -98,7 +99,7 @@ Drop an image on the window to use it as the wallpaper. To render every page to 
 4. Rim light, edge, glow and shadow come from the same distance.
 5. Draws that do not overlap share a pass. A page with 28 glass elements needs 3 passes.
 
-egui was the first choice as a base, but it paints everything in one pass, so a widget cannot see the widgets below it. That is why rust-glass is its own framework.
+egui was the first choice as a base, but it paints everything in one pass, so a widget cannot see the widgets below it. That is why rust-glass is its own framework. A renderer that draws egui apps with glass widgets is planned, see the [roadmap](https://github.com/MasterKPG/rust-glass/blob/main/ROADMAP.md#egui-integration).
 
 ## Performance
 

@@ -27,6 +27,7 @@ All notable changes are listed here. Format: Keep a Changelog.
 - An element that morphs between views follows its target when the target moves, settles as soon as it is in place, and the album cover's shadow sinks back as it lands.
 
 ### Changed
+- The guide describes how drag sources lift on press and how a morph follows a target that moves. The README lists morphs and content blur, and points to the planned egui integration.
 - The progress bar is a flat capsule in one color, 6 points high, without a gradient or gloss.
 - The album view of the showcase opens faster, and morphs travel on slightly quicker springs.
 - New preview pictures and clips of the rebuilt showcase, including the album view and the Lists page. The preview run writes the crop of each clip next to its frames.

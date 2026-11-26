@@ -239,7 +239,7 @@ The wheel scrolls the innermost area under the pointer that scrolls on that axis
 
 ## Drag and drop
 
-`ui.drag_source(id, payload, |ui| ...)` makes its content draggable. Once the pointer moves a few points with the button down, the content lifts onto a glass plate and follows the pointer, and its place in the layout fades. `ui.drop_zone::<P, _>(id, min_size, |ui| ...)` lights up while a payload of type `P` is over it and returns the payload in the frame it is dropped. Escape cancels a drag.
+`ui.drag_source(id, payload, |ui| ...)` makes its content draggable. A press lifts the content onto a glass plate and its place in the layout fades. Once the pointer moves a few points, the plate follows it. When the button is let go, the content settles back into place. `ui.drop_zone::<P, _>(id, min_size, |ui| ...)` lights up while a payload of type `P` is over it and returns the payload in the frame it is dropped. Escape cancels a drag.
 
 ```rust
 use rust_glass::prelude::*;
@@ -627,7 +627,7 @@ fn bar(ui: &mut Ui, open: bool) {
 
 Tunings: `SNAP` (no overshoot), `SMOOTH`, `PRESS` and `BOUNCY`, or `Tuning::new(response, damping)`, with the same meaning as a SwiftUI spring.
 
-`ctx.morph(key, view, rect)` moves an element from one view to another, such as a cover that grows from a grid into a detail page. Call it from whichever view draws the element, with the same key, and draw the element at the rectangle it returns. While the view stays the same the result is `rect`, so scrolling and layout changes follow at once.
+`ctx.morph(key, view, rect)` moves an element from one view to another, such as a cover that grows from a grid into a detail page. Call it from whichever view draws the element, with the same key, and draw the element at the rectangle it returns. While the view stays the same the result is `rect`, so scrolling and layout changes follow at once. When the target moves during the trip, the element moves along with it. `ctx.is_morphing(key)` is true while the element is on its way, for example to draw it above the rest of the page.
 
 Call `ctx.request_repaint()` in every frame while something else moves, such as a video or a timer. `ctx.dt` is the time since the last frame in seconds and `ctx.time` the time since start. Nothing can wake an idle window from another thread yet. While a background job runs, request a repaint and poll its channel in `update`.
 

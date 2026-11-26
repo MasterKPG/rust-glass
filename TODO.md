@@ -56,6 +56,7 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] egui integration (the approach is in the roadmap)
 
 ## Done (recent)
+- [x] Docs pass for the v0.3 release: guide, README and roadmap (2026-11-26)
 - [x] Polish pass (2026-11-26): gauge labels fit their ring with padding, flat progress bar, collapsing sections without a stall, menus and context menus that close in one motion, overlay blur that fades with the overlay, button labels without shake, a grab animation for drag sources, and album morphs that settle as soon as they are in place
 - [x] Preview pictures and clips rendered again from the new showcase (2026-11-26)
 - [x] Content blur during transitions: overlays, showcase pages and the album view (2026-11-26)

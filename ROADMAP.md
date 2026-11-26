@@ -19,15 +19,12 @@ A Rust UI framework whose controls look and move like Liquid Glass on every desk
 - Text editing with undo and input methods
 - Tests and renders on Windows, macOS and Linux
 
-### v0.3: Clarity and motion
-Goal: an API that reads well, and transitions that keep glass on one continuous surface.
-- Clear names, one module per widget, API docs for every item (done on dev)
-- A showcase that is easy to read (done on dev)
-- Elements that morph from one view into another (done on dev)
-- Content blur during transitions (done on dev)
-- Polish of every transition: menus, overlays, collapsing sections, presses and drags (done on dev)
-- Touch gestures with momentum, and tilt from device sensors
-- Screen readers checked with VoiceOver and Orca
+### v0.3: Clarity and motion (released 2026-11-26)
+- Clear names, one module per widget, API docs for every item
+- A showcase that is easy to read
+- Elements that morph from one view into another
+- Content blur during transitions
+- Polish of every transition: menus, overlays, collapsing sections, presses and drags
 
 ### v0.4: Speed
 Goal: a steady frame rate on integrated GPUs at 4K, with no loss in how glass looks.
@@ -58,6 +55,8 @@ Goal: usable outside its own window.
 - Renderer usable inside an existing wgpu app
 - egui integration with the same look (below)
 - Web build through WebGPU
+- Touch gestures with momentum, and tilt from device sensors
+- Screen readers checked with VoiceOver and Orca
 
 ## egui integration
 egui draws everything in one render pass. Glass has to sample what is already drawn below it, so glass widgets cannot simply be dropped into that pass. The plan keeps egui for layout, input and its own widgets, and lets rust-glass render the frame:
