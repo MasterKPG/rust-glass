@@ -4,14 +4,22 @@
 use std::any::Any;
 use std::hash::Hash;
 
-use crate::animation::{Spring, Tuning};
+use crate::animation::{Spring, SpringRect, Tuning};
 use crate::context::{Cursor, Id, Order, Response, Sense};
-use crate::geometry::{Rect, Vec2, vec2};
-use crate::material::Corner;
+use crate::geometry::{Rect, Vec2, smoothstep, vec2};
+use crate::material::{Corner, Glass};
 use crate::ui::Ui;
 
 /// Movement in points before a press turns into a drag.
 const SLOP: f32 = 6.0;
+
+/// The lift of a drag source: how far it has risen off the page, and where
+/// its lifted copy is.
+#[derive(Clone, Copy, Default)]
+struct Grab {
+    lift: Spring,
+    shape: SpringRect,
+}
 
 #[derive(Clone, Copy)]
 struct Reorder {
@@ -60,11 +68,11 @@ impl Ui<'_> {
         mut f: impl FnMut(&mut Ui),
     ) -> Response {
         let dragging = self.ctx.dragged_id() == Some(id);
+        let lift_id = id.with("lift");
+        let mut grab: Grab = self.ctx.get(lift_id);
         let old = self.opacity;
-        if dragging {
-            // The slot stays as a faint outline of what was picked up.
-            self.opacity *= 0.28;
-        }
+        // The slot stays as a faint outline of what was picked up.
+        self.opacity *= 1.0 - 0.72 * grab.lift.value.clamp(0.0, 1.0);
         let ((), rect) = self.scope_id(id.with("slot"), &mut f);
         self.opacity = old;
         let mut r = self.interact(id, rect, Sense::Drag);
@@ -80,20 +88,51 @@ impl Ui<'_> {
             let grab = self.ctx.input.press_origin - rect.min;
             self.ctx.start_drag(id, Box::new(payload), grab, rect.size());
         }
-        let lift = self.ctx.animate_bool(id.with("lift"), dragging, Tuning::new(0.28, 0.72));
-        if self.ctx.dragged_id() == Some(id)
-            && let Some(at) = self.ctx.drag_rect()
-        {
+        let dragging = self.ctx.dragged_id() == Some(id);
+
+        // The item lifts as soon as it is pressed, follows the pointer into
+        // the drag without a jump, and settles back into its slot when let
+        // go. Where the press started, the lifted copy is exactly on the
+        // slot, so the drag picks it up where it already is.
+        let held = dragging || r.held;
+        let place = match (dragging, self.ctx.drag_rect(), r.pointer) {
+            (true, Some(at), _) => Some(at),
+            (false, _, Some(p)) if held => Some(rect.translate(p - self.ctx.input.press_origin)),
+            _ => None,
+        };
+        let dt = self.ctx.dt;
+        let tuning = self.ctx.tuning(if held { Tuning::new(0.22, 0.74) } else { Tuning::new(0.26, 0.9) });
+        let mut moving = grab.lift.step(held as u32 as f32, tuning, dt);
+        match place {
+            Some(at) => grab.shape = SpringRect::new(at),
+            None => {
+                let back = self.ctx.tuning(Tuning::new(0.3, 0.9));
+                moving |= grab.shape.step(rect, back, back, dt);
+            }
+        }
+        if moving {
+            self.ctx.request_repaint();
+        }
+        let lift = grab.lift.value;
+        if held || lift > 0.01 {
+            let at = grab.shape.rect();
+            let at = Rect::from_center_size(at.center(), rect.size());
             let layer = self.ctx.layer(Id::new("drag and drop"), Order::Tooltip);
             let mut ui = Ui::new(self.ctx, layer, id.with("lifted"), at);
             ui.spacing = self.spacing;
             // A plate of glass carries the content and swells as it lifts.
-            let plate = at.expand(6.0 + 4.0 * lift.clamp(0.0, 1.2));
-            let m = ui.ctx.theme.regular;
-            ui.surface = ui.glass(id.with("plate"), plate, Corner::Radius(18.0), m, true);
+            let plate = at.expand(10.0 * lift.clamp(0.0, 1.2));
+            let mut m = ui.ctx.theme.regular;
+            m.shadow *= 1.0 + 0.6 * lift.clamp(0.0, 1.0);
+            let mut g = Glass::new(plate, Corner::Radius(12.0 + 6.0 * lift.clamp(0.0, 1.0)), m)
+                .presence(lift.clamp(0.0, 1.0));
+            ui.surface = ui.ctx.prepare_glass(id.with("plate"), &mut g, true).surface();
+            ui.painter().glass(&g);
+            ui.opacity = smoothstep(0.0, 0.5, lift);
             f(&mut ui);
-            r.changed = true;
+            r.changed = dragging;
         }
+        self.ctx.set(lift_id, grab);
         r
     }
 

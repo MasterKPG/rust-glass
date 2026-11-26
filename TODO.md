@@ -8,15 +8,55 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Try the accessibility tree with VoiceOver on macOS (needs a Mac)
 - [ ] Try the accessibility tree with Orca on Linux (needs a Linux desktop)
 - [ ] Touch gestures with momentum
+- [ ] Frame budget per page in CI: fail when the capture run gets more than 15 percent slower
+- [ ] Profile the album view on an integrated GPU in a real window, where it felt slow
+
+### Glass Studio: export settings as Rust
+- [ ] Turn the Material Lab into Glass Studio: sliders for every `Material` field and the theme settings (glass tint, accent, dark mode, contrast, reduce transparency and motion)
+- [ ] Live preview on a set of real controls (button, toggle, slider, tab bar, menu) over any wallpaper
+- [ ] "Export as Rust" writes a `glass_theme.rs` with `pub fn material() -> Material` and `pub fn theme() -> Theme`, leaving out values that match the defaults, ready to drop into a project
+- [ ] Copy the same code to the clipboard
+- [ ] Load an exported file back by parsing the values it wrote
+- [ ] Doc test that compiles an exported file
+
+### Components missing next to Apple's set
+- [ ] Toolbar: grouped items on one piece of glass, flexible and fixed spacers, overflow menu
+- [ ] Navigation bar with a large title that shrinks on scroll, and the scroll edge effect under bars
+- [ ] Search field in a toolbar, and a search tab that expands from the tab bar
+- [ ] Tab bar that minimizes on scroll, with a bottom accessory (the mini player in the showcase is one)
+- [ ] Popover: anchored glass that flows out of its control, with an arrowless and an arrowed style
+- [ ] Confirmation dialog (action sheet)
+- [ ] Sheet detents: medium and large, inset partial height sheets
+- [ ] Sidebar and split view as widgets, with an inspector column
+- [ ] Date and time pickers: compact, graphical and wheel
+- [ ] Wheel picker
+- [ ] Page control
+- [ ] Swipe actions and edit mode in lists
+- [ ] Context menu with a preview of its target
+- [ ] Menu sections, inline pickers and a palette row
+- [ ] Slider with tick marks and a neutral value
+- [ ] Token field
+- [ ] Badges on tab bar items and buttons
+- [ ] Glass container: several glass shapes that merge and split as one surface, with ids that morph between states
+- [ ] Concentric corners: children take the radius of their container minus the padding
+
+### Speed
+- [ ] Skip the backdrop copy and blur when nothing under a glass element changed
+- [ ] Blur large surfaces from a lower mip level where the result looks the same
+- [ ] Shader variants without dispersion and pinch for materials that turn them off
+- [ ] Automatic quality step on slow GPUs: fewer blur taps and no dispersion when frames run over budget
+- [ ] No allocation per frame in layout, reorder and text paths
+- [ ] Settle springs by visible change, the way morphs now do, so idle windows stop drawing sooner
 
 ## Backlog
 - [ ] Drag and drop between windows and to other apps
-- [ ] Date picker
 - [ ] Nested submenus
 - [ ] Render only the damaged part of the window
 - [ ] Image tests against stored reference renders
+- [ ] egui integration (the approach is in the roadmap)
 
 ## Done (recent)
+- [x] Polish pass (2026-11-26): gauge labels fit their ring with padding, flat progress bar, collapsing sections without a stall, menus and context menus that close in one motion, overlay blur that fades with the overlay, button labels without shake, a grab animation for drag sources, and album morphs that settle as soon as they are in place
 - [x] Preview pictures and clips rendered again from the new showcase (2026-11-26)
 - [x] Content blur during transitions: overlays, showcase pages and the album view (2026-11-26)
 - [x] Elements morph from one view into another with `Context::morph` (2026-11-26)

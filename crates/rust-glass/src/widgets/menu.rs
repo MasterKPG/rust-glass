@@ -4,12 +4,12 @@ use crate::accessibility::Role;
 use crate::animation::Tuning;
 use crate::color::Color;
 use crate::context::{Context, Cursor, Response, Sense};
-use crate::geometry::{Rect, Vec2, smoothstep, vec2};
+use crate::geometry::{Rect, Vec2, vec2};
 use crate::icon::Icon;
 use crate::material::{Corner, Glass};
 use crate::text::{TextStyle, Weight};
 use crate::ui::{Ui, Widget};
-use crate::widgets::popup::{popup, popup_progress};
+use crate::widgets::popup::{popup, popup_presence, popup_progress};
 use crate::widgets::press::PressEffect;
 
 /// Row inside a menu.
@@ -161,7 +161,7 @@ impl<'a> MenuButton<'a> {
         }
         let t = popup_progress(ui.ctx, r.id);
         let gel = PressEffect::update(ui.ctx, &r, 1.0);
-        let fade = 1.0 - smoothstep(0.0, 0.35, t);
+        let fade = 1.0 - popup_presence(t);
         let mut s = ui.surface;
         if ui.surface.is_glass() {
             let c = s.fill_color();

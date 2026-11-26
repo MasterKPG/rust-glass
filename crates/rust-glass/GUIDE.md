@@ -357,7 +357,9 @@ fn form(ui: &mut Ui, f: &mut Form, color: &mut Color) {
 
     // Status
     ui.progress(0.4);
-    ui.add(Gauge::new(0.7, "70").size(80.0).tint(Color::GREEN));
+    ui.add(ProgressBar::new(0.4).height(4.0).tint(Color::GREEN).track(Color::gray(0.8)));
+    // The label shrinks until it fits inside the ring with the padding to spare.
+    ui.add(Gauge::new(0.7, "Battery").size(80.0).thickness(8.0).label_padding(8.0));
     ui.spinner();
 
     // Grouping

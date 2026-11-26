@@ -273,6 +273,8 @@ pub struct Context {
 struct Morph {
     view: Id,
     shape: SpringRect,
+    /// Where the view put the element in the last frame.
+    target: Rect,
     moving: bool,
     seen: u64,
 }
@@ -968,7 +970,7 @@ impl Context {
     /// ```
     pub fn morph(&mut self, key: Id, view: Id, rect: Rect) -> Rect {
         let frame = self.frame;
-        let fresh = Morph { view, shape: SpringRect::new(rect), moving: false, seen: frame };
+        let fresh = Morph { view, shape: SpringRect::new(rect), target: rect, moving: false, seen: frame };
         let mut morph = match self.morphs.get(&key) {
             Some(m) if frame - m.seen < 1200 => *m,
             _ => fresh,
@@ -976,11 +978,25 @@ impl Context {
         if morph.view != view {
             morph.view = view;
             morph.moving = true;
+        } else if morph.moving {
+            // The view moved its place while the element travels to it, as
+            // when the page scrolls. Carry the element along, so it does not
+            // trail behind or drift once it seems to have arrived.
+            let carried = rect.center() - morph.target.center();
+            morph.shape.center.x.value += carried.x;
+            morph.shape.center.y.value += carried.y;
         }
+        morph.target = rect;
         let shown = if morph.moving {
-            let center = self.tuning(Tuning::new(0.44, 0.84));
-            let size = self.tuning(Tuning::new(0.44, 0.92));
-            morph.moving = morph.shape.step(rect, center, size, self.dt);
+            let center = self.tuning(Tuning::new(0.38, 0.86));
+            let size = self.tuning(Tuning::new(0.38, 0.94));
+            let springing = morph.shape.step(rect, center, size, self.dt);
+            // Done once it is a fraction of a point away and nearly still,
+            // rather than when the spring has died out completely.
+            let s = &morph.shape;
+            let off = (s.rect().min - rect.min).abs().max((s.rect().max - rect.max).abs());
+            let speed = s.center.velocity().abs().max(s.size.velocity().abs());
+            morph.moving = springing && (off.x.max(off.y) > 0.25 || speed.x.max(speed.y) > 8.0);
             self.repaint = true;
             if morph.moving { morph.shape.rect() } else { rect }
         } else {

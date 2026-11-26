@@ -11,19 +11,21 @@ use crate::material::Corner;
 use crate::text::{TextStyle, Weight};
 use crate::ui::{Ui, Widget};
 
-/// A bar that fills from left to right.
+/// A bar that fills from left to right: a flat capsule in one color on a
+/// quiet track, as on iOS. Progress bars are not glass.
 pub struct ProgressBar {
     value: f32,
     height: f32,
     tint: Option<Color>,
+    track: Option<Color>,
 }
 
 impl ProgressBar {
     /// Creates a bar filled to `value`, from 0 to 1.
     pub fn new(value: f32) -> Self {
-        Self { value, height: 8.0, tint: None }
+        Self { value, height: 6.0, tint: None, track: None }
     }
-    /// Sets the height in points. The default is 8.
+    /// Sets the height in points. The default is 6.
     pub fn height(mut self, height: f32) -> Self {
         self.height = height;
         self
@@ -31,6 +33,12 @@ impl ProgressBar {
     /// Sets the fill color. The default is the theme accent.
     pub fn tint(mut self, color: Color) -> Self {
         self.tint = Some(color);
+        self
+    }
+    /// Sets the color of the unfilled track. The default is the strong fill
+    /// of the surface below.
+    pub fn track(mut self, color: Color) -> Self {
+        self.track = Some(color);
         self
     }
 }
@@ -42,33 +50,50 @@ impl Widget for ProgressBar {
         if let Some(n) = ui.access(r.id, Role::ProgressIndicator, r.rect) {
             n.numeric(self.value.clamp(0.0, 1.0) as f64, 0.0, 1.0, None);
         }
-        let v = ui.ctx.animate(r.id, self.value.clamp(0.0, 1.0), Tuning::new(0.5, 0.9));
-        let c = self.tint.unwrap_or(ui.ctx.theme.accent);
-        let track = ui.surface.strong_fill_color();
-        let fw = (r.rect.width() * v).max(self.height);
-        let fill = Rect::from_min_size(r.rect.min, vec2(fw, self.height));
+        let v = ui.ctx.animate(r.id, self.value.clamp(0.0, 1.0), Tuning::new(0.5, 1.0));
+        let fill = self.tint.unwrap_or(ui.ctx.theme.accent);
+        let track = self.track.unwrap_or(ui.surface.strong_fill_color());
         let mut p = ui.painter();
         p.fill(r.rect, Corner::Capsule, track);
-        p.gradient(fill, Corner::Capsule, c.lerp(Color::WHITE, 0.10), c, vec2(0.0, 1.0));
-        let hl =
-            Rect::from_min_size(fill.min + vec2(3.0, 1.0), vec2((fw - 6.0).max(0.0), self.height * 0.34));
-        p.gradient(hl, Corner::Capsule, Color::white(0.45), Color::white(0.0), vec2(0.0, 1.0));
+        if v > 0.0005 {
+            // Below the height of the bar the fill shrinks into a dot rather
+            // than squashing its round ends.
+            let fw = r.rect.width() * v;
+            let h = self.height.min(fw.max(self.height * 0.5));
+            let bar =
+                Rect::from_min_size(vec2(r.rect.min.x, r.rect.center().y - h * 0.5), vec2(fw.max(h), h));
+            p.fill(bar, Corner::Capsule, fill);
+        }
         r
     }
 }
 
 /// A ring that fills clockwise, with a short label in the middle.
+///
+/// The label shrinks until it fits inside the ring with
+/// [`Gauge::label_padding`] to spare, so long words never touch it.
 pub struct Gauge<'a> {
     value: f32,
     size: f32,
     label: &'a str,
     tint: Color,
+    thickness: Option<f32>,
+    label_size: Option<f32>,
+    padding: Option<f32>,
 }
 
 impl<'a> Gauge<'a> {
     /// Creates a ring filled to `value`, from 0 to 1.
     pub fn new(value: f32, label: &'a str) -> Self {
-        Self { value, size: 64.0, label, tint: Color::GREEN }
+        Self {
+            value,
+            size: 64.0,
+            label,
+            tint: Color::GREEN,
+            thickness: None,
+            label_size: None,
+            padding: None,
+        }
     }
     /// Sets the diameter in points. The default is 64.
     pub fn size(mut self, size: f32) -> Self {
@@ -80,7 +105,28 @@ impl<'a> Gauge<'a> {
         self.tint = color;
         self
     }
+    /// Sets the width of the ring in points. The default is 11 percent of
+    /// the diameter.
+    pub fn thickness(mut self, thickness: f32) -> Self {
+        self.thickness = Some(thickness);
+        self
+    }
+    /// Sets the largest font size of the label in points. The default is 22
+    /// percent of the diameter. Labels that do not fit are drawn smaller.
+    pub fn label_size(mut self, size: f32) -> Self {
+        self.label_size = Some(size);
+        self
+    }
+    /// Sets the space kept between the label and the inside of the ring, in
+    /// points. The default is 9 percent of the diameter.
+    pub fn label_padding(mut self, padding: f32) -> Self {
+        self.padding = Some(padding);
+        self
+    }
 }
+
+/// Smallest label size a gauge shrinks to, in points.
+const MIN_GAUGE_LABEL: f32 = 7.0;
 
 impl Widget for Gauge<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
@@ -89,26 +135,42 @@ impl Widget for Gauge<'_> {
             n.label(self.label).numeric(self.value.clamp(0.0, 1.0) as f64, 0.0, 1.0, None);
         }
         let v = ui.ctx.animate(r.id, self.value.clamp(0.0, 1.0), Tuning::new(0.6, 0.85));
-        let w = self.size * 0.12;
-        let st = TextStyle::new(self.size * 0.22).weight(Weight::Semibold);
-        let l = ui.layout_text(self.label, &st);
+        let radius = self.size * 0.5;
+        let w = self.thickness.unwrap_or(self.size * 0.11).clamp(1.0, radius * 0.6);
+        let pad = self.padding.unwrap_or(self.size * 0.09).max(0.0);
+        let room = (radius - w - pad).max(1.0);
+        let l = fit_label(ui, self.label, self.label_size.unwrap_or(self.size * 0.22), room);
         let (track, tc) = (ui.surface.fill_color(), ui.surface.text_color());
+        let center = r.rect.center();
         let mut p = ui.painter();
-        p.arc(r.rect.center(), self.size * 0.5, w, 0.0, TAU, track, track);
+        p.arc(center, radius, w, 0.0, TAU, track, track);
         if v > 0.001 {
-            p.arc(
-                r.rect.center(),
-                self.size * 0.5,
-                w,
-                -TAU / 4.0,
-                v * TAU,
-                self.tint.lerp(Color::WHITE, 0.25),
-                self.tint,
-            );
+            // The round caps stick out by half the width at both ends. Keep
+            // a small gap between them when the ring is nearly full.
+            let cap = w / (radius - w * 0.5);
+            let sweep = (v * TAU).min(TAU - cap * 0.35);
+            p.arc(center, radius, w, -TAU / 4.0, sweep, self.tint.lerp(Color::WHITE, 0.2), self.tint);
         }
         p.text_centered(r.rect, &l, tc, 1.0);
         r
     }
+}
+
+/// Lays out `text` at `size`, or smaller until its box fits in a circle of
+/// `room` points radius.
+fn fit_label(ui: &mut Ui, text: &str, size: f32, room: f32) -> std::rc::Rc<crate::text::TextLayout> {
+    let style = |s: f32| TextStyle::new(s).weight(Weight::Semibold);
+    let l = ui.layout_text(text, &style(size));
+    // Glyphs fill about three quarters of the line height.
+    let half = vec2(l.size.x, l.size.y * 0.74) * 0.5;
+    let k = room / half.length().max(0.01);
+    if k >= 1.0 {
+        return l;
+    }
+    // Text scales with its size. Round down to half points so the layout
+    // is not redone for every tiny change.
+    let fitted = ((size * k * 2.0).floor() * 0.5).max(MIN_GAUGE_LABEL);
+    ui.layout_text(text, &style(fitted))
 }
 
 /// An activity indicator for work of unknown length.

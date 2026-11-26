@@ -64,7 +64,7 @@ pub fn show(state: &mut State, marks: &mut Marks, covers: &[ImageId], ctx: &mut 
         ui.painter().fill(sheet, 26.0, background);
         ui.mask = ui.painter().add_mask(sheet, 26.0, false, Default::default());
         ui.clip = sheet;
-        let tuning = ui.ctx.tuning(Tuning::new(0.42, 1.0));
+        let tuning = ui.ctx.tuning(Tuning::new(0.34, 1.0));
         if state.appear.step(1.0, tuning, ui.ctx.dt) {
             ui.ctx.request_repaint();
         }
@@ -118,11 +118,15 @@ fn album_cover(ui: &mut Ui, album: usize, image: ImageId, size: f32, detail: boo
     let shown = ui.ctx.morph(key, cover_view(detail), response.rect);
     let corner = if detail { 22.0 } else { 14.0 };
     if ui.ctx.is_morphing(key) {
-        // On its way, the cover flies above everything else on the page.
+        // On its way, the cover flies above everything else on the page. Its
+        // shadow sinks back as it lands, so arriving has no visible step.
+        let rest = response.rect;
+        let away = (shown.center() - rest.center()).length() + (shown.size() - rest.size()).length();
+        let lifted = (away / 60.0).min(1.0);
         let layer = ui.ctx.layer(Id::new("flying cover"), Order::Content);
         let mut painter = ui.ctx.painter(layer, ui.clip);
         painter.mask = ui.mask;
-        painter.shadow(shown.translate(vec2(0.0, 8.0)), corner, 18.0, Color::black(0.25));
+        painter.shadow(shown.translate(vec2(0.0, 8.0 * lifted)), corner, 18.0, Color::black(0.25 * lifted));
         painter.image(shown, corner, image, rect(0.0, 0.0, 1.0, 1.0), Color::WHITE);
     } else {
         ui.painter().image(shown, corner, image, rect(0.0, 0.0, 1.0, 1.0), Color::WHITE);

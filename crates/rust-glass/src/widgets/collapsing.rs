@@ -79,7 +79,10 @@ impl<'a> Collapsing<'a> {
                 ui.ctx.request_relayout();
             }
             s.h = size.y + 4.0;
-            ui.allocate(vec2(w, (shown - ui.spacing).max(0.0)));
+            // Exactly the revealed height, without a spacing of its own, so
+            // the section shrinks all the way to the title instead of
+            // stopping one spacing short and then jumping.
+            ui.space(shown);
         }
         ui.ctx.set(id, s);
     }

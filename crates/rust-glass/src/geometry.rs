@@ -49,6 +49,10 @@ impl Vec2 {
     pub fn max(self, other: Vec2) -> Self {
         vec2(self.x.max(other.x), self.y.max(other.y))
     }
+    /// Returns the absolute value of each component.
+    pub fn abs(self) -> Self {
+        vec2(self.x.abs(), self.y.abs())
+    }
     /// Mixes towards `other`: `t` = 0 gives `self`, 1 gives `other`.
     pub fn lerp(self, other: Vec2, t: f32) -> Self {
         self + (other - self) * t

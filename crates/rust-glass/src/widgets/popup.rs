@@ -4,7 +4,8 @@ use crate::animation::{Spring, SpringRect, Tuning};
 use crate::context::{Context, Id, Order, Response, Sense};
 use crate::geometry::{Rect, Vec2, lerp, smoothstep, vec2};
 use crate::input::Key;
-use crate::material::{Corner, Glass};
+use crate::material::{Corner, Glass, Material};
+use crate::paint::Painter;
 use crate::text::{TextStyle, Weight};
 use crate::ui::Ui;
 
@@ -59,13 +60,17 @@ pub fn popup(ctx: &mut Context, id: Id, anchor: Rect, width: f32, f: impl FnOnce
         (ctx.tuning(Tuning::new(0.30, 0.95)), ctx.tuning(Tuning::new(0.30, 0.95)))
     };
     let mut moving = s.shape.step(target, pt, st, dt);
-    moving |= s.t.step(open as u32 as f32, ctx.tuning(Tuning::new(if open { 0.30 } else { 0.26 }, 1.0)), dt);
-    if moving {
-        ctx.request_repaint();
-    } else if !open {
+    moving |= s.t.step(open as u32 as f32, ctx.tuning(Tuning::new(if open { 0.30 } else { 0.24 }, 1.0)), dt);
+    // A closing popup is gone once it has faded out, even if its shape is
+    // still a fraction of a point from the anchor.
+    if !open && (!moving || s.t.value < 0.01) {
         s.live = false;
         ctx.set(key, s);
+        ctx.request_repaint();
         return;
+    }
+    if moving {
+        ctx.request_repaint();
     }
     let t = s.t.value.clamp(0.0, 1.0);
     let shape = s.shape.rect();
@@ -74,7 +79,11 @@ pub fn popup(ctx: &mut Context, id: Id, anchor: Rect, width: f32, f: impl FnOnce
 
     let m = ctx.theme.regular.lerp(&ctx.theme.thick, t);
     let radius = lerp(anchor.height() * 0.5, 22.0, t).min(shape.height() * 0.5);
-    let mut g = Glass::new(shape, Corner::Radius(radius), m).presence(smoothstep(0.0, 0.12, t).max(0.35));
+    // The bubble fades in and out over the same stretch in which the
+    // control that opened it fades the other way, so the two cross over
+    // instead of the bubble lingering on top.
+    let presence = popup_presence(t);
+    let mut g = Glass::new(shape, Corner::Radius(radius), m).presence(presence);
     let a = ctx.prepare_glass(key, &mut g, false);
     ctx.painter(layer, Rect::EVERYTHING).glass(&g);
 
@@ -94,11 +103,12 @@ pub fn popup(ctx: &mut Context, id: Id, anchor: Rect, width: f32, f: impl FnOnce
         ui.spacing = 2.0;
         f(&mut ui);
         used = vec2(width, ui.used().height() + 16.0);
-        // The content comes into focus as the bubble opens.
-        let blur = BLUR_WHILE_FORMING * (1.0 - smoothstep(0.30, 0.95, t));
-        let inside = Corner::Radius((radius - 1.0).max(0.0));
-        ctx.painter(layer, Rect::EVERYTHING).blur(clip, inside, blur);
     }
+    // The content comes into focus as the bubble opens. The blur fades with
+    // the bubble, so it never outlasts it.
+    let blur = BLUR_WHILE_FORMING * (1.0 - smoothstep(0.30, 0.95, t));
+    let inside = Corner::Radius((radius - 1.0).max(0.0));
+    forming_blur(&mut ctx.painter(layer, Rect::EVERYTHING), shape.shrink(1.0), inside, blur, presence);
     if (used - s.size).length() > 0.5 {
         s.size = used;
         ctx.request_repaint();
@@ -115,6 +125,23 @@ pub fn popup(ctx: &mut Context, id: Id, anchor: Rect, width: f32, f: impl FnOnce
 
 /// Blur radius of the content of an overlay that has just started to form.
 pub(crate) const BLUR_WHILE_FORMING: f32 = 10.0;
+
+/// How present the glass of a popup is at progress `t`. A menu button fades
+/// its own glass with `1 - popup_presence(t)`.
+pub(crate) fn popup_presence(t: f32) -> f32 {
+    smoothstep(0.0, 0.4, t)
+}
+
+/// Blurs what is under `rect` by `radius`, mixed in at `presence`, so the
+/// blur of an overlay fades out together with the overlay.
+pub(crate) fn forming_blur(p: &mut Painter, rect: Rect, corner: Corner, radius: f32, presence: f32) {
+    if radius < 0.5 || presence <= 0.001 {
+        return;
+    }
+    let opacity = std::mem::replace(&mut p.opacity, 1.0);
+    p.glass(&Glass::new(rect, corner, Material::blur(radius)).presence(presence));
+    p.opacity = opacity;
+}
 
 /// Below the anchor if it fits, otherwise above, always inside the screen.
 fn place(anchor: Rect, size: Vec2, screen: Rect) -> Rect {

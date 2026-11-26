@@ -432,12 +432,15 @@ impl Painter<'_> {
         let want = l.font_size * ppp * scale;
         let px = if moving { (want * 2.0).round().max(2.0) * 0.5 } else { l.font_size * ppp };
         let residual = if moving { want / px } else { 1.0 };
+        let about_px = about * ppp;
         for g in &l.glyphs {
-            let p = about + (pos + g.pos - about) * scale;
-            let mut at = p * ppp;
-            if !moving {
-                at.y = at.y.round();
-            }
+            // Baselines sit on whole pixels at rest. While scaled, the glyph
+            // moves away from that same snapped place, so the text lands
+            // exactly where it rests and never hops by a fraction of a pixel
+            // when the scale reaches 1.
+            let mut rest = (pos + g.pos) * ppp;
+            rest.y = rest.y.round();
+            let at = if moving { about_px + (rest - about_px) * scale } else { rest };
             let Some((e, o)) = self.text.glyph(g, px, at) else { continue };
             let min = if moving { at + (o - at + e.offset) * residual } else { o + e.offset };
             let max = min + e.size * residual;

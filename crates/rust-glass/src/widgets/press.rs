@@ -63,9 +63,11 @@ impl PressEffect {
             pull = vec2(rubber_band(d.x, lim), rubber_band(d.y, lim));
         }
         let inside = held && r.hovered;
+        // The release settles with a single soft give rather than a wobble,
+        // so labels that grow with the surface do not shake on the way down.
         let mut shaped = s.press.step(
             if held { if inside { 1.0 } else { 0.55 } } else { 0.0 },
-            response.tuning(if held { Tuning::new(0.24, 0.78) } else { Tuning::new(0.44, 0.56) }),
+            response.tuning(if held { Tuning::new(0.24, 0.78) } else { Tuning::new(0.40, 0.80) }),
             dt,
         );
         shaped |= s.pull.step(pull, response.tuning(Tuning::new(if held { 0.16 } else { 0.42 }, 0.62)), dt);
@@ -87,7 +89,9 @@ impl PressEffect {
         PressEffect {
             // Exact at rest, so edges stay on whole pixels.
             rect: if shaped || held { rect } else { rest },
-            scale: 1.0 + grow / size.y.max(1.0) * 0.45,
+            // Content never shrinks below its size at rest, even while the
+            // surface gives a little past it.
+            scale: 1.0 + grow.max(0.0) / size.y.max(1.0) * 0.45,
             amount: s.press.value,
             hover: s.hover.value,
             bend: p.x * 0.018,

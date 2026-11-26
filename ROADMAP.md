@@ -25,15 +25,50 @@ Goal: an API that reads well, and transitions that keep glass on one continuous 
 - A showcase that is easy to read (done on dev)
 - Elements that morph from one view into another (done on dev)
 - Content blur during transitions (done on dev)
+- Polish of every transition: menus, overlays, collapsing sections, presses and drags (done on dev)
 - Touch gestures with momentum, and tilt from device sensors
 - Screen readers checked with VoiceOver and Orca
 
-### v0.4: Reach
+### v0.4: Speed
+Goal: a steady frame rate on integrated GPUs at 4K, with no loss in how glass looks.
+- A frame budget per showcase page, checked in CI. Today a page takes 3.5 to 6 ms of GPU time at 1770 x 1170 on Intel UHD Graphics.
+- Backdrop copies and blurs only where something changed, then damage tracking for the whole window
+- Large surfaces blurred from a lower mip level, shader variants for materials that skip dispersion and pinch
+- An automatic quality step for slow GPUs, and no allocation per frame on the CPU side
+- Springs that stop when the change is no longer visible, so the window goes idle sooner
+
+### v0.5: Components
+Goal: the controls an app needs, matching the Liquid Glass set of iOS 26 and 27.
+- Bars: toolbar with grouped items, navigation bar with a large title and the scroll edge effect, search in toolbars and tab bars, a tab bar that minimizes on scroll with a bottom accessory
+- Presentations: popovers that flow out of their control, confirmation dialogs, sheet detents
+- Navigation: sidebar, split view and inspector
+- Pickers: date, time, wheel and page control
+- Lists: swipe actions, edit mode, context menus with a preview
+- Glass containers whose shapes merge, split and morph by id, and concentric corners
+- The transparency setting of iOS 27, from ultra clear to fully tinted, already exists as `Theme::glass_tint`
+
+### v0.6: Glass Studio
+Goal: tune the look in a window and take it into code.
+- The Material Lab grows into Glass Studio: a slider for every material and theme setting, with a live preview on real controls
+- Export as a Rust file with `material()` and `theme()` functions, or copy it to the clipboard
+- Load an exported file back to keep tuning
+
+### v0.7: Reach
 Goal: usable outside its own window.
 - Renderer usable inside an existing wgpu app
+- egui integration with the same look (below)
 - Web build through WebGPU
 
+## egui integration
+egui draws everything in one render pass. Glass has to sample what is already drawn below it, so glass widgets cannot simply be dropped into that pass. The plan keeps egui for layout, input and its own widgets, and lets rust-glass render the frame:
+
+1. A crate `rust-glass-egui` with a renderer that takes egui's tessellated output (meshes and paint callbacks, in order) in place of `egui_wgpu::Renderer`.
+2. egui meshes are drawn into the rust-glass scene texture through a mesh pipeline. A glass widget adds a paint callback that carries its `Glass` description.
+3. When the renderer reaches a glass callback, it plans passes the way it does today: what was drawn so far becomes the backdrop, the glass is drawn, and egui content continues on top. Glass sees the egui widgets below it, and egui widgets draw over glass.
+4. Glass widgets with egui's API, such as `ui.add(GlassButton::new("Share"))`, plus a theme that sets egui's visuals to match: text colors, fills and corner radii.
+5. Springs run on egui's animation time, and adaptive light and dark uses the same backdrop measurement as now.
+
+A first spike checks two risks. egui_wgpu pins its own wgpu version, so the renderer may have to follow egui's wgpu releases. And egui expects a single pass, so the custom renderer has to be a drop-in replacement for the wgpu backend of eframe.
+
 ## Not planned
-- Building on egui. It paints in one pass, so glass could not see the widgets below it.
-- Bundling Apple fonts or SF Symbols. Their licenses do not allow it. Text uses the platform font, and the icons are drawn for this project.
 - A software renderer.

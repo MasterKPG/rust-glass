@@ -5,6 +5,10 @@ All notable changes are listed here. Format: Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- `Gauge::thickness`, `Gauge::label_size` and `Gauge::label_padding`. The label of a gauge shrinks until it fits inside the ring with the padding to spare, so a word like "Battery" no longer touches it.
+- `ProgressBar::track` sets the color of the unfilled part.
+- Drag sources lift onto their glass plate as soon as they are pressed, follow the pointer into the drag without a jump, and settle back into place when let go.
+- `Vec2::abs`.
 - Pages of the showcase come into focus as they appear, using `Painter::blur`.
 - `Context::morph` moves an element from the view that showed it to the view that shows it now. In the showcase, album covers grow from the grid into a detail view and back.
 - Scroll areas scroll to show a widget that gets focus from the keyboard or a screen reader.
@@ -15,7 +19,16 @@ All notable changes are listed here. Format: Keep a Changelog.
 - `Context::remove_image` frees an image.
 - API docs for every public item. Pushes to dev fail when the docs have warnings.
 
+### Fixed
+- A collapsing section no longer stalls one spacing short of closed and then jumps shut. Opening starts without a jump too.
+- Menus, combo boxes and context menus fade out together with their shape. The glass no longer lingers over the button at a third of its strength and vanishes at the end, and a context menu no longer leaves a dot behind.
+- The blur that brings popups, alerts and sheets into focus fades with them, instead of outlasting them and disappearing at once.
+- Button labels no longer shake when a press is released. The release settles without a wobble, labels never shrink below their size at rest, and scaled text lands on the same pixel it rests on.
+- An element that morphs between views follows its target when the target moves, settles as soon as it is in place, and the album cover's shadow sinks back as it lands.
+
 ### Changed
+- The progress bar is a flat capsule in one color, 6 points high, without a gradient or gloss.
+- The album view of the showcase opens faster, and morphs travel on slightly quicker springs.
 - New preview pictures and clips of the rebuilt showcase, including the album view and the Lists page. The preview run writes the crop of each clip next to its frames.
 - Breaking: each widget has its own module, such as `widgets::menu`, `widgets::dialog` and `widgets::toggle`. The old `bars`, `controls`, `overlay`, `gel` and `dnd` modules are gone. The prelude still exports every widget.
 - Breaking: `Checkbox`, `Radio`, `ProgressBar`, `Gauge`, `Spinner`, `Image`, `Collapsing`, `ColorPicker`, `Stepper`, `SplitButton`, `TabBar` and `ComboBox` are created with `new` and builder methods instead of struct literals. `Row` is now `SettingsRow`.
