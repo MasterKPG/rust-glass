@@ -4,7 +4,6 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 
 ## In progress
 - [ ] Blur content while a menu or sheet forms, not just fade it
-- [ ] Combine nested masks, so a segmented control fades at the edge of a scroll area
 - [ ] Items of a reordered list make room for the dragged one, instead of a line marking the spot
 - [ ] Scroll a focused widget into view, also when a screen reader moves to it
 
@@ -22,6 +21,7 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Image tests against stored reference renders
 
 ## Done (recent)
+- [x] Nested masks combine, so a segmented control fades at the edge of a scroll area (2026-11-26)
 - [x] Shorter README, roadmap and guide (2026-11-26), guide examples checked by the doc tests
 - [x] Showcase that is easier to read: titled cards, labeled controls (2026-11-26)
 - [x] API docs for every public item (2026-11-26)

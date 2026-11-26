@@ -14,6 +14,10 @@ struct Mask {
     power: f32,
     invert: f32,
     feather: vec4f,     // left, top, right, bottom
+    parent: u32,        // combined with this mask, 0 for none
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 };
 
 @group(0) @binding(0) var<uniform> G: Globals;
@@ -47,10 +51,8 @@ fn edge_aa(d: f32) -> f32 {
     return smoothstep(0.72, -0.72, d);
 }
 
-fn mask_coverage(index: u32, p: vec2f) -> f32 {
-    if (index == 0u) {
-        return 1.0;
-    }
+// Coverage of one mask, without the masks it is combined with.
+fn one_mask(index: u32, p: vec2f) -> f32 {
     let m = masks[index - 1u];
     let c = (m.rect.xy + m.rect.zw) * 0.5;
     let h = (m.rect.zw - m.rect.xy) * 0.5;
@@ -64,6 +66,18 @@ fn mask_coverage(index: u32, p: vec2f) -> f32 {
     if (f.y > 0.0) { a *= smoothstep(0.0, 1.0, (p.y - m.rect.y) / f.y); }
     if (f.z > 0.0) { a *= smoothstep(0.0, 1.0, (m.rect.z - p.x) / f.z); }
     if (f.w > 0.0) { a *= smoothstep(0.0, 1.0, (m.rect.w - p.y) / f.w); }
+    return a;
+}
+
+// Coverage of a mask and every mask it is combined with. A mask is always
+// added after its parent, so the chain ends.
+fn mask_coverage(index: u32, p: vec2f) -> f32 {
+    var a = 1.0;
+    var i = index;
+    for (var depth = 0; depth < 8 && i != 0u && a > 0.0; depth++) {
+        a *= one_mask(i, p);
+        i = masks[i - 1u].parent;
+    }
     return a;
 }
 

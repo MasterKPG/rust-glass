@@ -5,6 +5,7 @@ All notable changes are listed here. Format: Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- A mask added while another is active is combined with it. A segmented control or tab bar inside a scroll area now fades at its edge like everything else.
 - `Context::remove_image` frees an image.
 - API docs for every public item. Pushes to dev fail when the docs have warnings.
 

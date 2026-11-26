@@ -313,3 +313,32 @@ pub fn set_scroll_offset(ui: &mut Ui, id: &'static str, offset: Vec2) {
     }
     ui.ctx.set(id, s);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::Context;
+    use crate::geometry::rect;
+    use crate::widgets::panel::region;
+
+    #[test]
+    fn masks_inside_a_fading_area_keep_its_fade() {
+        let mut ctx = Context::new();
+        let mut selected = 0;
+        ctx.begin_frame(vec2(400.0, 300.0), 1.0, 0.0, &[]);
+        region(&mut ctx, "page", rect(0.0, 0.0, 400.0, 300.0), |ui| {
+            ScrollArea::new().fade(20.0, 20.0).height(100.0).show(ui, |ui| {
+                for _ in 0..10 {
+                    ui.segmented(&mut selected, &["One", "Two"]);
+                }
+            });
+        });
+        ctx.end_frame();
+        let masks = &ctx.paint.data.masks;
+        // The first mask is the fade of the area, the rest belong to the
+        // segmented controls and must be combined with it.
+        assert!(masks.len() > 1);
+        assert_eq!(masks[0].parent, 0);
+        assert!(masks[1..].iter().all(|m| m.parent == 1));
+    }
+}

@@ -36,6 +36,9 @@ pub(crate) struct MaskInst {
     pub power: f32,
     pub invert: f32,
     pub feather: [f32; 4],
+    /// Number of the mask this one is combined with. 0 is none.
+    pub parent: u32,
+    pub pad: [u32; 3],
 }
 
 #[repr(C)]
@@ -297,6 +300,9 @@ impl Painter<'_> {
     /// Adds a mask and returns its number, for [`Painter::with_mask`]. Paint
     /// shows inside `rect`, or outside with `invert`. `feather` fades the
     /// edges of the rectangle.
+    ///
+    /// The new mask is combined with the painter's current mask, so content a
+    /// widget masks for itself still fades at the edge of a scroll area.
     pub fn add_mask(&mut self, rect: Rect, corner: impl Into<Corner>, invert: bool, feather: Feather) -> u32 {
         let (rad, n) = corner.into().resolve(rect.size());
         let s = self.paint.ppp;
@@ -307,6 +313,8 @@ impl Painter<'_> {
             power: n,
             invert: invert as u32 as f32,
             feather: [f.left * s, f.top * s, f.right * s, f.bottom * s],
+            parent: self.mask,
+            pad: [0; 3],
         };
         self.paint.data.masks.push(m);
         self.paint.data.masks.len() as u32
