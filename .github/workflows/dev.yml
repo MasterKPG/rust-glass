@@ -23,3 +23,26 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo package -p rust-glass --locked
+
+  # Tests and headless renders on the other desktop platforms. Linux renders
+  # through lavapipe, the software Vulkan driver of Mesa. The pictures are
+  # attached to the run for comparison with the Windows ones.
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev mesa-vulkan-drivers
+      - run: cargo test --workspace --locked
+      - run: cargo run --release --locked -p showcase -- --capture captures
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: captures-${{ runner.os }}
+          path: captures
+          retention-days: 14

@@ -33,9 +33,13 @@ More pictures are in the [preview](https://github.com/MasterKPG/rust-glass/tree/
 - Slider, switch and tab bar thumbs lift into lenses whose shape follows acceleration
 - A transparency setting from ultra clear to tinted that also controls how clear the lifted lenses are, plus reduced transparency, reduced motion and increased contrast
 - Keyboard focus and operation for the interactive controls
+- Screen readers see every built in widget with its role, name and state, and can operate it, through [AccessKit](https://accesskit.dev). The tree is built only while one listens
+- Scrolling on one or two axes, and lists of any length that lay out only the rows in view
+- Drag and drop with payloads of any type, and lists that reorder by dragging
+- Text fields with undo and redo, and input method composition shown at the caret
 - Draws only on change. An idle window uses no CPU
 
-Components: button (regular, prominent, tinted, clear, plain, icon, group, splitting), slider, stepper, drag value, switch, checkbox, radio, segmented control, tab bar, text field, search field, password field, multi line editor, menu, combo box, context menu, color picker, progress bar, gauge, spinner, tooltip, toast, alert, modal, sheet, window, panel, navigation list, scroll area, collapsing section, settings row, table, card, image, link.
+Components: button (regular, prominent, tinted, clear, plain, icon, group, splitting), slider, stepper, drag value, switch, checkbox, radio, segmented control, tab bar, text field, search field, password field, multi line editor, menu, combo box, context menu, color picker, progress bar, gauge, spinner, tooltip, toast, alert, modal, sheet, window, panel, navigation list, scroll area (vertical, horizontal, both, virtualized rows), drag source, drop zone, reorderable list, collapsing section, settings row, table, card, image, link.
 
 ## Install
 
@@ -126,6 +130,7 @@ crates/rust-glass/src
   paint.rs     draw lists
   ui.rs        layout
   context.rs   input routing, animation memory, backdrop measurements
+  access.rs    accessibility tree for screen readers
   widgets/     components
 examples/showcase
 scripts/       versioning for the release workflow
@@ -138,7 +143,7 @@ Work happens on the dev branch, where every push is tested. Merging dev into mai
 
 ## Status
 
-Early. Windows with Vulkan is the only platform tested so far. See [ROADMAP.md](https://github.com/MasterKPG/rust-glass/blob/main/ROADMAP.md) and [TODO.md](https://github.com/MasterKPG/rust-glass/blob/main/TODO.md).
+Early. Windows is tested by hand on Vulkan and DirectX 12, which render alike. Every push to dev also runs the tests and renders every page on macOS (Metal) and on Linux (Vulkan, through the Mesa software driver). See [ROADMAP.md](https://github.com/MasterKPG/rust-glass/blob/main/ROADMAP.md) and [TODO.md](https://github.com/MasterKPG/rust-glass/blob/main/TODO.md).
 
 Contributions are not open.
 

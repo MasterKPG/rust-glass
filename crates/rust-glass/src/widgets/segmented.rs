@@ -1,5 +1,6 @@
 //! Segmented control, tab bar and switch. All three share the droplet thumb.
 
+use crate::access::{Action, Role};
 use crate::anim::Tuning;
 use crate::color::Color;
 use crate::context::{Context, Cursor, Id, Order, Response, Sense};
@@ -162,6 +163,16 @@ impl Widget for Segmented<'_> {
         if r.hovered {
             ui.ctx.cursor = Cursor::Pointer;
         }
+        for (i, cell) in cells.iter().enumerate() {
+            let sid = r.id.with(("segment", i));
+            if ui.ctx.access_requested(sid, &Action::Click) {
+                *self.selected = i;
+            }
+            let sel = *self.selected == i;
+            if let Some(node) = ui.access(sid, Role::Tab, *cell) {
+                node.label(self.labels.get(i).copied().unwrap_or_default()).selected(sel);
+            }
+        }
         r.changed = before != *self.selected;
 
         let sel = *self.selected;
@@ -287,8 +298,13 @@ impl Widget for Toggle<'_> {
             let moved = r.pointer.is_some_and(|p| (p.x - ui.ctx.input.press_origin.x).abs() > 4.0);
             *self.on = if moved { d.pos.x > mid } else { !before };
         }
-        if r.focused && (ui.ctx.input.take_key(Key::Space) || ui.ctx.input.take_key(Key::Enter)) {
+        if (r.focused && (ui.ctx.input.take_key(Key::Space) || ui.ctx.input.take_key(Key::Enter)))
+            || ui.ctx.access_requested(id, &Action::Click)
+        {
             *self.on = !*self.on;
+        }
+        if let Some(n) = ui.access(id, Role::Switch, rect) {
+            n.label(self.label).toggled(*self.on);
         }
         r.changed = before != *self.on;
         let home = if *self.on { x1 } else { x0 };
@@ -365,6 +381,16 @@ impl TabBar<'_> {
             }
             if ctx.input.take_key(Key::Left) {
                 *self.selected = self.selected.saturating_sub(1);
+            }
+        }
+        for (i, tab) in self.tabs.iter().enumerate() {
+            let tid = id.with(("tab", i));
+            if ctx.access_requested(tid, &Action::Click) {
+                *self.selected = i;
+            }
+            let cell = Rect::from_center_size(vec2(ox + at(i), center.y), pill);
+            if let Some(node) = ctx.access_node(tid, Role::Tab, cell, layer) {
+                node.label(tab.1).selected(*self.selected == i);
             }
         }
         let changed = before != *self.selected;

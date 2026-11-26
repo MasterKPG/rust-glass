@@ -3,6 +3,7 @@
 
 use std::f32::consts::TAU;
 
+use crate::access::Role;
 use crate::anim::Tuning;
 use crate::color::Color;
 use crate::context::{Cursor, Response, Sense};
@@ -29,6 +30,9 @@ impl Widget for Checkbox<'_> {
         if r.clicked {
             *self.on = !*self.on;
             r.changed = true;
+        }
+        if let Some(n) = ui.access(r.id, Role::CheckBox, r.rect) {
+            n.label(self.label).toggled(*self.on);
         }
         if r.hovered {
             ui.ctx.cursor = Cursor::Pointer;
@@ -97,6 +101,9 @@ impl Widget for Radio<'_> {
         let l = ui.layout_text(self.label, &st);
         let r = ui.alloc_interact(vec2(b + 9.0 + l.size.x, 28.0), Sense::Click);
         ui.ctx.focusable(r.id);
+        if let Some(n) = ui.access(r.id, Role::RadioButton, r.rect) {
+            n.label(self.label).toggled(self.selected);
+        }
         if r.hovered {
             ui.ctx.cursor = Cursor::Pointer;
         }
@@ -128,6 +135,9 @@ impl Widget for ProgressBar {
     fn ui(self, ui: &mut Ui) -> Response {
         let w = ui.available_width().clamp(60.0, 460.0);
         let r = ui.alloc_interact(vec2(w, self.height), Sense::Hover);
+        if let Some(n) = ui.access(r.id, Role::ProgressIndicator, r.rect) {
+            n.numeric(self.value.clamp(0.0, 1.0) as f64, 0.0, 1.0, None);
+        }
         let v = ui.ctx.animate(r.id, self.value.clamp(0.0, 1.0), Tuning::new(0.5, 0.9));
         let c = self.tint.unwrap_or(ui.ctx.theme.accent);
         let track = ui.surface.fill_strong();
@@ -154,6 +164,9 @@ pub struct Gauge<'a> {
 impl Widget for Gauge<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let r = ui.alloc_interact(Vec2::splat(self.size), Sense::Hover);
+        if let Some(n) = ui.access(r.id, Role::Meter, r.rect) {
+            n.label(self.label).numeric(self.value.clamp(0.0, 1.0) as f64, 0.0, 1.0, None);
+        }
         let v = ui.ctx.animate(r.id, self.value.clamp(0.0, 1.0), Tuning::new(0.6, 0.85));
         let w = self.size * 0.12;
         let st = TextStyle::new(self.size * 0.22).weight(Weight::Semibold);
@@ -242,6 +255,9 @@ impl Collapsing<'_> {
         if r.clicked {
             s.open = !s.open;
         }
+        if let Some(n) = ui.access(id, Role::Button, rect) {
+            n.label(self.title).expanded(s.open);
+        }
         if r.hovered {
             ui.ctx.cursor = Cursor::Pointer;
         }
@@ -291,6 +307,9 @@ impl Widget for ColorPicker<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let mut r = ui.alloc_interact(vec2(46.0, 30.0), Sense::Click);
         ui.ctx.focusable(r.id);
+        if let Some(n) = ui.access(r.id, Role::ColorWell, r.rect) {
+            n.label("Color").value(format!("#{:06X}", self.color.to_hex() >> 8));
+        }
         if r.hovered {
             ui.ctx.cursor = Cursor::Pointer;
         }
@@ -407,6 +426,9 @@ impl Row<'_> {
         p.text(vec2(x, r.center().y - l.size.y * 0.5), &l, c);
         let left = x + l.size.x + 16.0;
         let id = ui.next_id();
+        if let Some(n) = ui.access(id.with("title"), Role::Label, r) {
+            n.label(self.title);
+        }
         // Right aligned by remembering last frame's width.
         #[derive(Clone, Copy, Default)]
         struct W(f32);
@@ -416,7 +438,9 @@ impl Row<'_> {
         }
         let tw = prev.map_or(0.0, |w| w.0);
         let tr = Rect { min: vec2((r.max.x - tw).max(left), r.min.y), max: r.max };
+        let from = ui.ctx.access_nodes().len();
         let (_, used) = ui.row_sized(id, tr, trailing);
+        ui.ctx.access_label_since(from, self.title);
         ui.ctx.set(id, W(used.x));
     }
 }

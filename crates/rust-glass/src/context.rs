@@ -5,6 +5,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use crate::access::{Access, Action, LayerInfo, Node, Role};
 use crate::anim::{Spring, Spring2, Tuning};
 use crate::color::Color;
 use crate::geom::{Rect, Vec2, vec2};
@@ -100,7 +101,8 @@ struct Hit {
     rect: Rect,
     layer: usize,
     sense: Sense,
-    scroll: bool,
+    /// Axes a scroll area takes wheel input for: bit 0 x, bit 1 y.
+    scroll: u8,
 }
 
 struct Layer {
@@ -166,6 +168,9 @@ pub struct Context {
     pub cursor: Cursor,
     pub host: Vec<HostCmd>,
     pub uploads: Vec<ImageUpload>,
+    /// Caret of the focused text field, where an input method shows its
+    /// candidates. Set by the field every frame it has focus.
+    pub ime: Option<Rect>,
     next_image: u32,
     states: HashMap<(Id, TypeId), (Box<dyn Any>, u64)>,
     layers: Vec<Layer>,
@@ -173,7 +178,7 @@ pub struct Context {
     hits: Vec<Hit>,
     prev_hits: Vec<Hit>,
     pub(crate) hovered: Option<Id>,
-    scroll_target: Option<Id>,
+    scroll_target: [Option<Id>; 2],
     pub(crate) active: Option<Id>,
     pub(crate) focus: Option<Id>,
     focus_by_key: bool,
@@ -187,6 +192,18 @@ pub struct Context {
     scroll_energy: f32,
     toasts: Vec<crate::widgets::overlay::ToastState>,
     open_popups: HashMap<Id, bool>,
+    access: Access,
+    drawn: Vec<usize>,
+    drag: Option<Drag>,
+}
+
+/// Something picked up with [`Ui::drag_source`](crate::Ui::drag_source).
+struct Drag {
+    source: Id,
+    payload: Box<dyn Any>,
+    /// Pointer position inside the item when it was picked up.
+    grab: Vec2,
+    size: Vec2,
 }
 
 impl Default for Context {
@@ -211,6 +228,7 @@ impl Context {
             cursor: Cursor::Default,
             host: Vec::new(),
             uploads: Vec::new(),
+            ime: None,
             next_image: 1,
             states: HashMap::new(),
             layers: Vec::new(),
@@ -218,7 +236,7 @@ impl Context {
             hits: Vec::new(),
             prev_hits: Vec::new(),
             hovered: None,
-            scroll_target: None,
+            scroll_target: [None; 2],
             active: None,
             focus: None,
             focus_by_key: false,
@@ -232,6 +250,9 @@ impl Context {
             scroll_energy: 0.0,
             toasts: Vec::new(),
             open_popups: HashMap::new(),
+            access: Access::default(),
+            drawn: Vec::new(),
+            drag: None,
         }
     }
 
@@ -247,7 +268,15 @@ impl Context {
         self.cursor = Cursor::Default;
         self.repaint = false;
         self.relayout = false;
+        self.ime = None;
         self.input.begin(events, time);
+        self.access.nodes.clear();
+        self.access.requests.clear();
+        for e in events {
+            if let Event::Access(id, a) = e {
+                self.access_request(*id, a.clone());
+            }
+        }
         self.paint.begin(ppp);
         self.paint.frost = self.theme.frost;
         self.paint.reduce_transparency = self.theme.reduce_transparency;
@@ -257,25 +286,42 @@ impl Context {
         std::mem::swap(&mut self.hits, &mut self.prev_hits);
         self.hits.clear();
         self.hovered = None;
-        self.scroll_target = None;
+        self.scroll_target = [None; 2];
         if let Some(p) = self.input.pointer {
             let key = |h: &Hit, i: usize| {
                 let l = &self.layers[h.layer];
                 (l.order, l.z, i)
             };
-            let mut best: Option<((Order, u64, usize), Hit)> = None;
-            let mut best_scroll: Option<((Order, u64, usize), Hit)> = None;
+            type Best = Option<((Order, u64, usize), Hit)>;
+            let mut best: Best = None;
+            let mut best_scroll: [Best; 2] = [None; 2];
             for (i, h) in self.prev_hits.iter().enumerate() {
                 if !h.rect.contains(p) {
                     continue;
                 }
                 let k = key(h, i);
-                let slot = if h.scroll { &mut best_scroll } else { &mut best };
-                if slot.as_ref().is_none_or(|b| k > b.0) {
-                    *slot = Some((k, *h));
+                if h.scroll == 0 {
+                    if best.as_ref().is_none_or(|b| k > b.0) {
+                        best = Some((k, *h));
+                    }
+                    continue;
+                }
+                for (axis, slot) in best_scroll.iter_mut().enumerate() {
+                    if h.scroll & (1 << axis) != 0 && slot.as_ref().is_none_or(|b| k > b.0) {
+                        *slot = Some((k, *h));
+                    }
                 }
             }
-            if let Some((k, h)) = best {
+            // A scroll area below an opaque layer does not scroll.
+            let top = best.map(|(k, _)| (k.0, k.1));
+            for (axis, s) in best_scroll.iter().enumerate() {
+                if let Some((ks, s)) = s
+                    && top.is_none_or(|t| (ks.0, ks.1) >= t)
+                {
+                    self.scroll_target[axis] = Some(s.id);
+                }
+            }
+            if let Some((_, h)) = best {
                 self.hovered = Some(h.id);
                 if self.input.pressed {
                     if h.sense != Sense::Hover {
@@ -286,14 +332,6 @@ impl Context {
                     let z = self.z_top;
                     self.layers[h.layer].z = z;
                 }
-                // A scroll area below an opaque layer does not scroll.
-                if let Some((ks, s)) = best_scroll
-                    && (ks.0, ks.1) >= (k.0, k.1)
-                {
-                    self.scroll_target = Some(s.id);
-                }
-            } else if let Some((_, s)) = best_scroll {
-                self.scroll_target = Some(s.id);
             }
         }
         if self.input.pressed {
@@ -301,6 +339,10 @@ impl Context {
             if self.hovered != self.focus {
                 self.focus = None;
             }
+        }
+        if self.drag.is_some() && self.input.take_key(Key::Escape) {
+            self.drag = None;
+            self.active = None;
         }
         if self.input.take_key(Key::Tab) {
             self.move_focus(if self.input.modifiers.shift { -1 } else { 1 });
@@ -324,6 +366,12 @@ impl Context {
         crate::widgets::overlay::show_toasts(self);
         if self.input.released || !self.input.down {
             self.active = None;
+            if self.drag.take().is_some() {
+                self.repaint = true;
+            }
+        }
+        if self.drag.is_some() {
+            self.repaint = true;
         }
         if self.focus.is_some() && !self.focus_seen {
             self.focus = None;
@@ -338,6 +386,7 @@ impl Context {
             (0..self.layers.len()).filter(|&i| self.layers[i].used == self.frame).collect();
         order.sort_by_key(|&i| (self.layers[i].order, self.layers[i].z, i));
         self.paint.flatten(&order);
+        self.drawn = order;
         let a = self.light.x;
         let d = &mut self.paint.data;
         d.clear = self.clear.to_array();
@@ -391,6 +440,14 @@ impl Context {
         let (b, used) = self.states.get_mut(&(id, TypeId::of::<T>()))?;
         *used = f;
         b.downcast_ref::<T>().cloned()
+    }
+    /// Move the state out, leaving nothing stored. Cheaper than [`Self::get`]
+    /// for large state; put it back with [`Self::set`].
+    pub fn take<T: Default + 'static>(&mut self, id: Id) -> T {
+        match self.states.remove(&(id, TypeId::of::<T>())) {
+            Some((b, _)) => b.downcast::<T>().map(|b| *b).unwrap_or_default(),
+            None => T::default(),
+        }
     }
     pub fn set<T: 'static>(&mut self, id: Id, v: T) {
         self.states.insert((id, TypeId::of::<T>()), (Box::new(v), self.frame));
@@ -474,15 +531,16 @@ impl Context {
     pub fn interact(&mut self, id: Id, rect: Rect, clip: Rect, layer: usize, sense: Sense) -> Response {
         let visible = rect.intersect(clip);
         if visible.is_positive() {
-            self.hits.push(Hit { id, rect: visible, layer, sense, scroll: false });
+            self.hits.push(Hit { id, rect: visible, layer, sense, scroll: 0 });
         }
         let hovered = self.hovered == Some(id) && (self.active.is_none() || self.active == Some(id));
         let held = self.active == Some(id) && (self.input.down || self.input.released);
         let focused = self.focus == Some(id);
-        let key_click = focused
+        let key_click = (focused
             && self.focus_by_key
             && sense == Sense::Click
-            && (self.input.key(Key::Enter) || self.input.key(Key::Space));
+            && (self.input.key(Key::Enter) || self.input.key(Key::Space)))
+            || (sense != Sense::Hover && self.access_requested(id, &Action::Click));
         Response {
             id,
             rect,
@@ -503,6 +561,11 @@ impl Context {
     /// Register a widget for keyboard focus. Call every frame it is visible.
     pub fn focusable(&mut self, id: Id) {
         self.focus_list.push(id);
+        if self.access.on
+            && let Some(n) = self.access.nodes.iter_mut().rev().find(|n| n.id == id)
+        {
+            n.focusable = true;
+        }
         if self.focus == Some(id) {
             self.focus_seen = true;
         }
@@ -530,9 +593,22 @@ impl Context {
         self.focus_by_key = true;
     }
 
+    /// Wheel movement for a scroll area on both axes.
     pub fn scroll_area(&mut self, id: Id, rect: Rect, layer: usize) -> Vec2 {
-        self.hits.push(Hit { id, rect, layer, sense: Sense::Hover, scroll: true });
-        if self.scroll_target == Some(id) { self.input.scroll } else { Vec2::ZERO }
+        self.scroll_area_axes(id, rect, layer, true, true)
+    }
+
+    /// Wheel movement on the axes the area scrolls. The other axis goes to
+    /// the scroll area around it, so a horizontal row inside a page leaves
+    /// vertical scrolling to the page.
+    pub fn scroll_area_axes(&mut self, id: Id, rect: Rect, layer: usize, x: bool, y: bool) -> Vec2 {
+        let scroll = x as u8 | (y as u8) << 1;
+        self.hits.push(Hit { id, rect, layer, sense: Sense::Hover, scroll });
+        let s = self.input.scroll;
+        vec2(
+            if x && self.scroll_target[0] == Some(id) { s.x } else { 0.0 },
+            if y && self.scroll_target[1] == Some(id) { s.y } else { 0.0 },
+        )
     }
 
     pub fn is_active(&self, id: Id) -> bool {
@@ -611,6 +687,156 @@ impl Context {
         glass.shadow_boost = a.boost;
         glass.stat_key = Some(id.0);
         a
+    }
+
+    // ----- accessibility -----
+
+    /// Collect the accessibility tree. The window host turns this on when a
+    /// screen reader asks for the tree and off when it goes away.
+    pub fn set_accessibility(&mut self, on: bool) {
+        self.access.on = on;
+        self.repaint = true;
+    }
+    pub fn accessibility(&self) -> bool {
+        self.access.on
+    }
+
+    /// Describe an element for assistive technology. Returns `None` while no
+    /// screen reader is listening, so building labels costs nothing then.
+    /// [`Ui::access`](crate::Ui::access) fills in the layer for you.
+    pub fn access_node(&mut self, id: Id, role: Role, rect: Rect, layer: usize) -> Option<&mut Node> {
+        if !self.access.on {
+            return None;
+        }
+        let mut n = Node::new(id, role, rect);
+        n.layer = layer;
+        n.focusable = self.focus_list.contains(&id);
+        self.access.nodes.push(n);
+        self.access.nodes.last_mut()
+    }
+
+    /// Label the node `id` described in this frame, for widgets that have no
+    /// text of their own, such as sliders.
+    pub fn access_label(&mut self, id: Id, label: impl Into<String>) {
+        if let Some(n) = self.access.nodes.iter_mut().rev().find(|n| n.id == id) {
+            n.label = label.into();
+        }
+    }
+
+    /// Give every node described since `from` (an index into
+    /// [`Self::access_nodes`]) that has no label this one. Rows use it to name
+    /// the switch or slider at their end after their title.
+    pub fn access_label_since(&mut self, from: usize, label: &str) {
+        for n in self.access.nodes.iter_mut().skip(from) {
+            if n.label.is_empty() && n.role != Role::Label {
+                n.label = label.to_string();
+            }
+        }
+    }
+
+    /// Nodes described so far in this frame.
+    pub fn access_nodes(&self) -> &[Node] {
+        &self.access.nodes
+    }
+
+    /// The request was made for `id` this frame.
+    pub fn access_requested(&self, id: Id, a: &Action) -> bool {
+        self.access.requests.iter().any(|(i, x)| *i == id && x == a)
+    }
+
+    /// Text a screen reader wants to put into the field `id`.
+    pub fn take_access_text(&mut self, id: Id) -> Option<String> {
+        let i =
+            self.access.requests.iter().position(|(i, a)| *i == id && matches!(a, Action::SetValue(_)))?;
+        match self.access.requests.remove(i).1 {
+            Action::SetValue(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Value a screen reader wants to give the slider or stepper `id`.
+    pub fn take_access_number(&mut self, id: Id) -> Option<f64> {
+        let i =
+            self.access.requests.iter().position(|(i, a)| *i == id && matches!(a, Action::SetNumber(_)))?;
+        match self.access.requests.remove(i).1 {
+            Action::SetNumber(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn access_request(&mut self, id: Id, a: Action) {
+        self.repaint = true;
+        match &a {
+            Action::Focus => {
+                self.focus = Some(id);
+                self.focus_by_key = true;
+            }
+            Action::Blur => {
+                if self.focus == Some(id) {
+                    self.focus = None;
+                }
+            }
+            // Steps arrive as arrow keys, which every adjustable widget handles.
+            Action::Increment | Action::Decrement => {
+                self.focus = Some(id);
+                self.focus_by_key = true;
+                let k = if a == Action::Increment { Key::Right } else { Key::Left };
+                self.input.keys.push((k, Default::default()));
+            }
+            Action::ReplaceSelection(t) => {
+                self.focus = Some(id);
+                self.input.text.push_str(t);
+            }
+            Action::Click | Action::SetValue(_) | Action::SetNumber(_) => {}
+        }
+        self.access.requests.push((id, a));
+    }
+
+    /// The full tree of the last frame, for AccessKit.
+    pub fn access_update(&self, title: &str) -> accesskit::TreeUpdate {
+        let layers: Vec<LayerInfo> = self
+            .drawn
+            .iter()
+            .map(|&i| LayerInfo { index: i, id: self.layers[i].id, order: self.layers[i].order })
+            .collect();
+        crate::access::tree(&self.access.nodes, &layers, self.focus, self.ppp, self.screen, title)
+    }
+
+    // ----- drag and drop -----
+
+    /// Pick up `payload`. Usually called by [`Ui::drag_source`](crate::Ui::drag_source).
+    pub fn start_drag(&mut self, source: Id, payload: Box<dyn Any>, grab: Vec2, size: Vec2) {
+        self.drag = Some(Drag { source, payload, grab, size });
+        self.active = Some(source);
+        self.repaint = true;
+    }
+    /// Source of what is being dragged.
+    pub fn dragged_id(&self) -> Option<Id> {
+        self.drag.as_ref().map(|d| d.source)
+    }
+    /// Payload being dragged, if it has type `P`.
+    pub fn dragged<P: Clone + 'static>(&self) -> Option<P> {
+        self.drag.as_ref()?.payload.downcast_ref::<P>().cloned()
+    }
+    /// Where the dragged item is drawn: pointer minus the grab offset.
+    pub fn drag_rect(&self) -> Option<Rect> {
+        let d = self.drag.as_ref()?;
+        let p = self.input.pointer?;
+        Some(Rect::from_min_size(p - d.grab, d.size))
+    }
+    /// A payload of type `P` is dragged over `r`.
+    pub fn drag_over<P: 'static>(&self, r: Rect) -> bool {
+        self.drag.as_ref().is_some_and(|d| d.payload.is::<P>())
+            && self.input.pointer.is_some_and(|p| r.contains(p))
+    }
+    /// The payload when it is released over `r`. Only the first taker gets it.
+    pub fn take_drop<P: 'static>(&mut self, r: Rect) -> Option<P> {
+        if !self.input.released || !self.drag_over::<P>(r) {
+            return None;
+        }
+        let d = self.drag.take()?;
+        self.repaint = true;
+        d.payload.downcast::<P>().ok().map(|b| *b)
     }
 
     // ----- misc -----

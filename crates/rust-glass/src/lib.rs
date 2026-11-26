@@ -23,6 +23,7 @@
 //!
 //! The [`guide`] covers layout, widgets, theming, materials and testing.
 
+pub mod access;
 pub mod anim;
 pub mod app;
 pub mod color;

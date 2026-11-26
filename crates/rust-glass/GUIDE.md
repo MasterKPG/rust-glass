@@ -6,6 +6,8 @@ How to build an app with rust-glass. Every Rust block on this page is compiled b
 - [The app loop](#the-app-loop)
 - [Put things on screen](#put-things-on-screen)
 - [Layout](#layout)
+- [Scrolling and long lists](#scrolling-and-long-lists)
+- [Drag and drop](#drag-and-drop)
 - [Widgets](#widgets)
 - [Menus, dialogs and windows](#menus-dialogs-and-windows)
 - [Images and wallpaper](#images-and-wallpaper)
@@ -14,6 +16,7 @@ How to build an app with rust-glass. Every Rust block on this page is compiled b
 - [Custom painting and your own widgets](#custom-painting-and-your-own-widgets)
 - [Animation and repainting](#animation-and-repainting)
 - [Keyboard, clipboard and links](#keyboard-clipboard-and-links)
+- [Accessibility](#accessibility)
 - [Testing without a window](#testing-without-a-window)
 - [Common problems](#common-problems)
 
@@ -194,9 +197,87 @@ fn layout(ui: &mut Ui) {
 
 `ui.add_enabled(condition, |ui| ...)` dims everything inside and blocks input while the condition is false.
 
-`ScrollArea` scrolls vertically. It fills the remaining height unless you call `.height(h)`. `.fade(top, bottom)` dissolves content at the edges. Two scroll areas in one `Ui` need different ids: `ScrollArea::new().id("left")`.
-
 Most widgets get their identity from their position in the layout. If widgets come and go, give the changing part its own `in_rect` with a stable id, or the state of the widgets after it moves along (a running animation, keyboard focus, an open menu).
+
+## Scrolling and long lists
+
+`ScrollArea::new()` scrolls vertically, `ScrollArea::horizontal()` sideways and `ScrollArea::both()` on two axes. An area fills the remaining height unless you call `.height(h)`. Two scroll areas in one `Ui` need different ids.
+
+```rust
+use rust_glass::prelude::*;
+
+fn scrolling(ui: &mut Ui, photos: &[String], rows: &[String]) {
+    // A row of cards. Children sit side by side.
+    ScrollArea::horizontal().id("photos").height(140.0).fade_sides(24.0, 24.0).show(ui, |ui| {
+        for p in photos {
+            ui.button(p);
+        }
+    });
+
+    // A table wider and taller than the view.
+    ScrollArea::both().id("table").height(300.0).content_width(1600.0).show(ui, |ui| {
+        ui.label("Wide content");
+    });
+
+    // A long list: only the rows in view are laid out.
+    ScrollArea::new().id("rows").height(400.0).show_rows(ui, 28.0, rows.len(), |ui, range| {
+        for i in range {
+            ui.label(&rows[i]);
+        }
+    });
+}
+```
+
+The wheel scrolls the innermost area under the pointer that scrolls on that axis. A horizontal row inside a page leaves the vertical wheel to the page and takes sideways swipes. Shift with the wheel scrolls sideways.
+
+`show_rows` takes the height of one row and the number of rows, and calls your closure with the range that is visible, plus one row on each side. Each row has to be exactly that tall. The cost of a frame then depends on the height of the view, not on the length of the list, so a hundred thousand rows scroll as smoothly as ten.
+
+`.fade(top, bottom)` and `.fade_sides(left, right)` dissolve content at the edges, `.insets(top, bottom)` keeps room for floating bars, and `scroll_offset` and `set_scroll_offset` in `widgets::scroll` save and restore the position.
+
+## Drag and drop
+
+`ui.drag_source(id, payload, |ui| ...)` makes its content draggable. Once the pointer moves a few points with the button down, the content lifts onto a glass plate and follows the pointer, and its place in the layout fades. `ui.drop_zone::<P, _>(id, min_size, |ui| ...)` lights up while a payload of type `P` is over it and returns the payload in the frame it is dropped. Escape cancels a drag.
+
+```rust
+use rust_glass::prelude::*;
+
+struct Board {
+    todo: Vec<String>,
+    done: Vec<String>,
+}
+
+fn board(ui: &mut Ui, b: &mut Board) {
+    ui.horizontal(|ui| {
+        ui.vertical(240.0, |ui| {
+            for (i, task) in b.todo.iter().enumerate() {
+                // The id must follow the item, not its position.
+                ui.drag_source(("task", task.as_str()), i, |ui| {
+                    ui.button(task);
+                });
+            }
+        });
+        let (_, dropped) = ui.drop_zone::<usize, _>("done", vec2(240.0, 200.0), |ui| {
+            for task in &b.done {
+                ui.label(task);
+            }
+        });
+        if let Some(i) = dropped {
+            b.done.push(b.todo.remove(i));
+        }
+    });
+}
+
+fn tasks(ui: &mut Ui, list: &mut Vec<String>) {
+    // Drag items up and down to change the order.
+    ui.reorder("tasks", list, |ui, task| {
+        ui.label(task);
+    });
+}
+```
+
+The payload can be any type that is `Clone` and `'static`. Zones only react to their own type, so a list of files and a list of colors on one screen do not mix. For your own drop targets, `ctx.dragged::<P>()`, `ctx.drag_over::<P>(rect)` and `ctx.take_drop::<P>(rect)` are the parts the zone is built from.
+
+Files dropped on the window from outside arrive in `App::file_dropped`.
 
 ## Widgets
 
@@ -573,6 +654,46 @@ fn quit(ctx: &mut Context) {
 
 `take_key` consumes the press, so a widget drawn later does not see it. `ctx.input` also has the pointer position, buttons, scroll and typed text.
 
+Text fields undo with Ctrl+Z and redo with Ctrl+Shift+Z or Ctrl+Y (Command on macOS). Typing undoes a word at a time, while paste, cut and deleting a selection are steps of their own. When the app changes the text itself, the history of that field starts over.
+
+Input methods for Chinese, Japanese, Korean and other scripts work in every text field. The text being composed shows underlined at the caret, and the candidate window of the system opens next to it.
+
+## Accessibility
+
+Screen readers (Narrator, NVDA and JAWS on Windows, VoiceOver on macOS, Orca on Linux) see every built in widget with its role, name, value and state, and can operate it: press buttons, flip switches, move sliders, pick tabs and segments, and set the text of fields. The tree goes to the platform through [AccessKit](https://accesskit.dev). It is built only while a screen reader listens, so an app without one pays nothing.
+
+Widgets without text of their own, such as a slider, need a name:
+
+```rust
+use rust_glass::prelude::*;
+
+fn volume(ui: &mut Ui, v: &mut f32) {
+    let r = ui.slider(v, 0.0..=1.0);
+    ui.ctx.access_label(r.id, "Volume");
+}
+```
+
+`Row` names the controls at its end after its title, so a settings list needs nothing extra. Your own widgets describe themselves with `ui.access`, which returns `None` while no screen reader listens:
+
+```rust
+use rust_glass::access::Role;
+use rust_glass::prelude::*;
+
+fn star(ui: &mut Ui, on: &mut bool) {
+    let r = ui.alloc_interact(vec2(28.0, 28.0), Sense::Click);
+    if r.clicked {
+        *on = !*on;
+    }
+    if let Some(n) = ui.access(r.id, Role::CheckBox, r.rect) {
+        n.label("Favorite").toggled(*on);
+    }
+    ui.ctx.focusable(r.id);
+    ui.painter().icon(r.rect.center(), 20.0, Icon::Star, Color::YELLOW.fade(if *on { 1.0 } else { 0.3 }));
+}
+```
+
+A click from a screen reader arrives through `Response::clicked` like any other. Steps on sliders arrive as arrow keys. New text for a field arrives through `ctx.take_access_text(id)`, which `TextEdit` handles. In tests, `ctx.set_accessibility(true)` turns the tree on, `ctx.access_nodes()` lists what was described and `Event::Access` sends a request.
+
 ## Testing without a window
 
 `Headless` runs an app with scripted input and fixed time steps, and returns pixels. It needs a GPU but no window:
@@ -609,5 +730,9 @@ For logic only, drive a `Context` with `begin_frame` and `end_frame`. That needs
 **A dialog disappears without an animation.** It is called only while open. Call it every frame and let the `bool` decide.
 
 **An animation stops halfway.** Nothing asks for the next frame. Use `ctx.animate` or call `ctx.request_repaint()`.
+
+**A screen reader reads a control without a name.** It has no text of its own. Name it with `ui.ctx.access_label(response.id, "Name")`.
+
+**A dragged item jumps back to another one.** Its `drag_source` id comes from its position. Use something that belongs to the item, such as its name or key.
 
 **`run` returns an error about the adapter or the surface.** The driver offers none of Vulkan, DirectX 12 and Metal, or the window cannot be drawn to. Update the GPU driver.

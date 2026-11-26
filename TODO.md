@@ -6,20 +6,27 @@ Short-term work. Long-term plan lives in [ROADMAP.md](ROADMAP.md).
 - [ ] Second round of visual corrections after review
 
 ## Next
-- [ ] Horizontal and two axis scrolling
+- [ ] Check the macOS and Linux renders from CI against the Windows ones
+- [ ] Try the accessibility tree with VoiceOver and Orca
 - [ ] Blur content while a menu or sheet forms, not just fade it
-- [ ] Undo and redo in text fields
 - [ ] Combine nested masks, so a segmented control fades at the edge of a scroll area
-- [ ] Run the showcase on DirectX 12, Metal and Linux
+- [ ] Items of a reordered list make room for the dragged one, instead of a line marking the spot
+- [ ] Scroll a focused widget into view, also when a screen reader moves to it
 
 ## Backlog
-- [ ] Virtualized lists for long content
+- [ ] Drag and drop between windows and to other apps
 - [ ] Date picker
 - [ ] Nested submenus
 - [ ] Render only the damaged part of the window
 - [ ] Image tests against stored reference renders
 
 ## Done (recent)
+- [x] Accessibility tree through AccessKit, checked with Windows UI Automation (2026-11-26)
+- [x] Horizontal and two axis scrolling, wheel routed per axis (2026-11-26)
+- [x] Virtualized lists with `show_rows` (2026-11-26)
+- [x] Drag and drop, reorderable lists (2026-11-26)
+- [x] Undo and redo in text fields, input method preview (2026-11-26)
+- [x] Showcase on DirectX 12: renders like Vulkan; macOS and Linux run in CI (2026-11-26)
 - [x] Public repository, license, guide, v0.1.0 on crates.io and GitHub (2026-11-25)
 - [x] Releases from pushes to main (2026-11-25)
 - [x] Dev branch with its own tests, main is for releases (2026-11-25)

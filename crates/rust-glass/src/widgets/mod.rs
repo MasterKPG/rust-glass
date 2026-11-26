@@ -1,6 +1,7 @@
 pub mod bars;
 pub mod button;
 pub mod controls;
+pub mod dnd;
 pub mod gel;
 pub mod overlay;
 pub mod scroll;

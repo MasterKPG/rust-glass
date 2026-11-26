@@ -3,6 +3,7 @@
 use std::hash::Hash;
 use std::rc::Rc;
 
+use crate::access::{Node, Role};
 use crate::color::Color;
 use crate::context::{Context, Id, Response, Sense};
 use crate::geom::{Rect, Vec2, vec2};
@@ -181,6 +182,15 @@ impl<'a> Ui<'a> {
         self.ctx.interact(id, r, self.clip, self.layer, sense)
     }
 
+    /// Make the space used so far at least `size`, measured from the top left.
+    pub fn reserve(&mut self, size: Vec2) {
+        self.content.max = self.content.max.max(self.max.min + size);
+        match self.dir {
+            Dir::Vertical => self.cursor.y = self.cursor.y.max(self.content.max.y),
+            Dir::Horizontal { .. } => self.cursor.x = self.cursor.x.max(self.content.max.x),
+        }
+    }
+
     pub fn space(&mut self, v: f32) {
         match self.dir {
             Dir::Vertical => self.cursor.y += v,
@@ -209,6 +219,24 @@ impl<'a> Ui<'a> {
         w.ui(self)
     }
 
+    /// Describe an element for screen readers. `None` while none is listening.
+    ///
+    /// ```
+    /// # use rust_glass::prelude::*;
+    /// # use rust_glass::access::Role;
+    /// # fn f(ui: &mut Ui, r: Response, on: bool) {
+    /// if let Some(n) = ui.access(r.id, Role::Switch, r.rect) {
+    ///     n.label("Airplane mode").toggled(on);
+    /// }
+    /// # }
+    /// ```
+    pub fn access(&mut self, id: Id, role: Role, rect: Rect) -> Option<&mut Node> {
+        let enabled = self.enabled;
+        let n = self.ctx.access_node(id, role, rect, self.layer)?;
+        n.disabled = !enabled;
+        Some(n)
+    }
+
     pub fn add_enabled<R>(&mut self, enabled: bool, f: impl FnOnce(&mut Ui) -> R) -> R {
         let old = self.enabled;
         self.enabled &= enabled;
@@ -219,7 +247,7 @@ impl<'a> Ui<'a> {
 
     // ----- containers -----
 
-    fn size_of(&mut self, id: Id) -> Vec2 {
+    pub(crate) fn size_of(&mut self, id: Id) -> Vec2 {
         match self.ctx.try_get::<SizeMem>(id) {
             Some(s) => s.0,
             None => {
@@ -228,7 +256,7 @@ impl<'a> Ui<'a> {
             }
         }
     }
-    fn remember(&mut self, id: Id, size: Vec2) {
+    pub(crate) fn remember(&mut self, id: Id, size: Vec2) {
         let old = self.ctx.try_get::<SizeMem>(id).map(|s| s.0);
         if old.is_none_or(|o| (o - size).length() > 0.5) {
             if old.is_some() {
@@ -302,6 +330,35 @@ impl<'a> Ui<'a> {
         self.remember(id, used);
         self.alloc(vec2(width, used.y));
         out
+    }
+
+    /// Children stacked in a column as wide as they need, placed like a
+    /// single widget. Returns the rectangle it took.
+    pub fn scope<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> (R, Rect) {
+        let id = self.next_id();
+        self.scope_id(id, f)
+    }
+
+    /// Same as [`Self::scope`] with an id of your own, so the state of the
+    /// widgets inside follows the content when it moves in the layout.
+    pub fn scope_id<R>(&mut self, id: Id, f: impl FnOnce(&mut Ui) -> R) -> (R, Rect) {
+        let prev = self.size_of(id);
+        let gap = if self.first { 0.0 } else { self.spacing };
+        let start = match self.dir {
+            Dir::Horizontal { row } => {
+                vec2(self.cursor.x + gap, self.max.min.y + ((row - prev.y) * 0.5).max(0.0))
+            }
+            Dir::Vertical => self.cursor + vec2(0.0, gap),
+        };
+        let max = Rect { min: start, max: self.max.max.max(start) };
+        let mut ui = self.sub(id, max, Dir::Vertical);
+        let out = f(&mut ui);
+        let used = ui.content.size();
+        self.remember(id, used);
+        let align = std::mem::replace(&mut self.align, Align::Start);
+        let r = self.alloc(used);
+        self.align = align;
+        (out, r)
     }
 
     /// Equal width columns. `f` is called once per column.
@@ -429,14 +486,19 @@ impl<'a> Ui<'a> {
     }
     pub fn heading(&mut self, text: &str) -> Response {
         let c = self.surface.text();
-        self.text_with(text, TextStyle::new(self.ctx.theme.title).weight(Weight::Bold), c)
+        let st = TextStyle::new(self.ctx.theme.title).weight(Weight::Bold);
+        self.text_role(text, st, c, Role::Heading)
     }
     pub fn subheading(&mut self, text: &str) -> Response {
         let c = self.surface.text();
         self.text_with(text, TextStyle::new(17.0).weight(Weight::Semibold), c)
     }
 
-    pub fn text_with(&mut self, text: &str, mut st: TextStyle, c: Color) -> Response {
+    pub fn text_with(&mut self, text: &str, st: TextStyle, c: Color) -> Response {
+        self.text_role(text, st, c, Role::Label)
+    }
+
+    fn text_role(&mut self, text: &str, mut st: TextStyle, c: Color, role: Role) -> Response {
         if !self.is_horizontal() && st.wrap.is_none() {
             st.wrap = Some(self.max.width().max(10.0));
         }
@@ -444,6 +506,9 @@ impl<'a> Ui<'a> {
         let r = self.alloc(l.size);
         self.painter().text(r.min, &l, c);
         let id = self.next_id();
+        if let Some(n) = self.access(id, role, r) {
+            n.label(text);
+        }
         Response {
             id,
             rect: r,

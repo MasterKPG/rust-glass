@@ -1,3 +1,4 @@
+use crate::access::Role;
 use crate::anim::Tuning;
 use crate::color::Color;
 use crate::context::{Context, Cursor, Id, Response, Sense};
@@ -135,6 +136,12 @@ impl Widget for Button<'_> {
             None => ui.next_id(),
         };
         let r = ui.interact(id, rect, Sense::Click);
+        if let Some(n) = ui.access(id, Role::Button, rect) {
+            n.label(if self.label.is_empty() { self.icon.map_or("", Icon::name) } else { self.label });
+            if self.selected {
+                n.selected(true);
+            }
+        }
         if ui.enabled {
             ui.ctx.focusable(id);
         }
@@ -237,6 +244,9 @@ impl<'a> ButtonGroup<'a> {
         for (i, item) in self.items.iter().enumerate() {
             let r = Rect::from_min_size(vec2(rect.min.x + cell * i as f32, rect.min.y), vec2(cell, h));
             let res = ui.interact(id.with(i), r, Sense::Click);
+            if let Some(n) = ui.access(res.id, Role::Button, r) {
+                n.label(item.1);
+            }
             ui.ctx.focusable(res.id);
             if res.clicked {
                 clicked = Some(i);
@@ -288,6 +298,9 @@ impl SplitButton<'_> {
         if main.clicked {
             open = !open;
         }
+        if let Some(n) = ui.access(main.id, Role::Button, home) {
+            n.label(self.icon.name()).expanded(open);
+        }
         ui.ctx.set(id, open);
         let gel = Gel::update(ui.ctx, &main, 1.0);
         let mut clicked = None;
@@ -308,6 +321,9 @@ impl SplitButton<'_> {
             let r = Rect::from_center_size(vec2(x + d * 0.5, home.center().y), Vec2::splat(size));
             let hit = if open { r } else { Rect::NOTHING };
             let res = ui.interact(id.with(("item", i)), hit, if open { Sense::Click } else { Sense::Hover });
+            if open && let Some(n) = ui.access(res.id, Role::Button, r) {
+                n.label(item.0.name());
+            }
             let g = Gel::update(ui.ctx, &Response { rect: r, ..res }, if open { 1.0 } else { 0.0 });
             if res.clicked {
                 clicked = Some(i);
@@ -366,6 +382,9 @@ impl Ui<'_> {
         let st = TextStyle::new(self.ctx.theme.body).weight(Weight::Medium);
         let l = self.layout_text(label, &st);
         let r = self.alloc_interact(l.size, Sense::Click);
+        if let Some(n) = self.access(r.id, Role::Link, r.rect) {
+            n.label(label);
+        }
         let c = self.ctx.theme.accent;
         let u = self.ctx.animate_bool(r.id.with("u"), r.hovered, Tuning::SNAP);
         if r.hovered {

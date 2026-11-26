@@ -4,6 +4,23 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+- Accessibility through AccessKit. Screen readers see every built in widget with its role, name, value and state, and can press buttons, flip switches, move sliders and steppers, pick tabs and segments and set the text of fields. The tree is built only while a screen reader listens. `Ui::access` describes your own widgets and `Context::access_label` names controls without text.
+- Rows of a settings list give their title to the switch, slider or stepper at their end.
+- Horizontal scrolling with `ScrollArea::horizontal()` and scrolling on both axes with `ScrollArea::both()`. The wheel goes to the innermost area that scrolls on its axis, so a row of cards inside a page leaves vertical scrolling to the page. Shift turns the wheel sideways.
+- `ScrollArea::show_rows` lays out only the visible rows of a long list. A hundred thousand rows cost as much as ten.
+- `ScrollArea::fade_sides`, `width`, `content_width`, and `scroll_offset` and `set_scroll_offset` to save and restore a position.
+- Drag and drop: `Ui::drag_source` lifts its content onto a glass plate that follows the pointer, `Ui::drop_zone` accepts payloads of one type and lights up under them, `Ui::reorder` reorders a list by dragging. Escape cancels a drag.
+- Undo and redo in text fields with Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y (Command on macOS). Typing undoes a word at a time.
+- Input method composition shows underlined at the caret, and the candidate window opens next to it.
+- `Ui::scope` and `Ui::scope_id` lay out a group of widgets as one, `Ui::reserve` sets a minimum size.
+- Lists & Drag page in the showcase.
+- Tests and headless renders on macOS and Linux for every push to dev.
+
+### Changed
+- The input method is enabled only while a text field has focus.
+- `Context::scroll_area` routes wheel input per axis. `Context::scroll_area_axes` takes the axes an area scrolls on.
+
 ## [0.1.1] - 2026-11-25
 
 ### Changed

@@ -1,5 +1,7 @@
 //! Input state for one frame.
 
+use crate::access::Action;
+use crate::context::Id;
 use crate::geom::{Vec2, vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +45,19 @@ pub enum Event {
     Modifiers(Modifiers),
     Focus(bool),
     Paste(String),
+    /// Text being composed by an input method, not committed yet. The range
+    /// is the cursor or selection inside it, in bytes. An empty string ends
+    /// the composition.
+    Preedit(String, Option<(usize, usize)>),
+    /// A request from assistive technology, such as a screen reader.
+    Access(Id, Action),
+}
+
+/// Composition of an input method, shown at the caret of the focused field.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Preedit {
+    pub text: String,
+    pub cursor: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -60,6 +75,8 @@ pub struct Input {
     pub text: String,
     pub modifiers: Modifiers,
     pub focused: bool,
+    /// Text an input method is composing. Persists across frames.
+    pub preedit: Option<Preedit>,
     last_press: f64,
     /// A press and its release in the same frame: the release waits one frame.
     deferred_up: bool,
@@ -117,6 +134,10 @@ impl Input {
                 Event::Key(k) => self.keys.push((*k, self.modifiers)),
                 Event::Text(t) => self.text.push_str(t),
                 Event::Paste(t) => self.text.push_str(t),
+                Event::Preedit(t, c) => {
+                    self.preedit = (!t.is_empty()).then(|| Preedit { text: t.clone(), cursor: *c });
+                }
+                Event::Access(..) => {}
                 Event::Modifiers(m) => self.modifiers = *m,
                 Event::Focus(f) => {
                     self.focused = *f;
@@ -126,6 +147,10 @@ impl Input {
                     }
                 }
             }
+        }
+        // Shift turns a mouse wheel sideways.
+        if self.modifiers.shift && self.scroll.x == 0.0 {
+            self.scroll = vec2(self.scroll.y, 0.0);
         }
     }
 

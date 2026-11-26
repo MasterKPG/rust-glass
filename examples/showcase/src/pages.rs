@@ -44,6 +44,8 @@ pub struct State {
     ref_v: f32,
     ref_seg: usize,
     ref_toggle: bool,
+    tasks: Vec<String>,
+    boards: [Vec<String>; 2],
     pub lab: Material,
     pub lab_pos: Vec2,
     pub lab_size: f32,
@@ -93,6 +95,13 @@ impl Default for State {
             ref_v: 0.54,
             ref_seg: 0,
             ref_toggle: true,
+            tasks: ["Pick up the glass", "Sand the edges", "Polish", "Mount the frame", "Hang it"]
+                .map(String::from)
+                .to_vec(),
+            boards: [
+                ["Write the release notes", "Record the clips", "Test on Linux"].map(String::from).to_vec(),
+                ["Accessibility tree".to_string()].to_vec(),
+            ],
             lab: Material::CLEAR,
             lab_pos: vec2(620.0, 190.0),
             lab_size: 170.0,
@@ -103,8 +112,8 @@ impl Default for State {
 pub fn show(app: &mut Showcase, ctx: &mut Context, main: Rect) {
     match app.page {
         0 => player(app, ctx, main),
-        9 => lab(app, ctx, main),
-        10 => reference(app, ctx, main),
+        10 => lab(app, ctx, main),
+        11 => reference(app, ctx, main),
         n => scrolled(app, ctx, main, n),
     }
     overlays(app, ctx, main);
@@ -139,6 +148,7 @@ fn scrolled(app: &mut Showcase, ctx: &mut Context, main: Rect, page: usize) {
                 5 => menus(s, ui),
                 6 => feedback(s, ui),
                 7 => windows(s, ui),
+                8 => lists(s, ui),
                 _ => settings(s, ui),
             }
         });
@@ -455,6 +465,132 @@ fn windows(s: &mut State, ui: &mut Ui) {
             s.sheet = true;
         }
     });
+}
+
+const TILES: &[(&str, Color, Color)] = &[
+    ("Coast", Color::TEAL, Color::BLUE),
+    ("Dune", Color::ORANGE, Color::PINK),
+    ("Moss", Color::GREEN, Color::TEAL),
+    ("Dusk", Color::INDIGO, Color::PINK),
+    ("Ember", Color::RED, Color::ORANGE),
+    ("Lagoon", Color::BLUE, Color::GREEN),
+    ("Iris", Color::PURPLE, Color::INDIGO),
+    ("Citrus", Color::YELLOW, Color::GREEN),
+];
+
+fn lists(s: &mut State, ui: &mut Ui) {
+    title(ui, "Horizontal");
+    ScrollArea::horizontal().id("tiles").height(150.0).fade_sides(28.0, 28.0).show(ui, |ui| {
+        for i in 0..24 {
+            let (name, a, b) = TILES[i % TILES.len()];
+            let r = ui.alloc(vec2(170.0, 124.0));
+            let mut p = ui.painter();
+            p.shadow(r.translate(vec2(0.0, 4.0)), 22.0, 14.0, Color::black(0.18));
+            p.gradient(r, 22.0, a, b, vec2(0.6, 1.0));
+            let st = TextStyle::new(15.0).weight(Weight::Semibold);
+            let l = ui.layout_text(&format!("{name} {}", i + 1), &st);
+            ui.painter().text(r.min + vec2(16.0, r.height() - 16.0 - l.size.y), &l, Color::WHITE);
+        }
+    });
+    ui.caption("Swipe sideways or hold Shift while turning the wheel.");
+
+    title(ui, "Two axes");
+    ui.card(|ui| {
+        ScrollArea::both().id("sheet").height(210.0).content_width(1290.0).show(ui, |ui| {
+            ui.spacing = 0.0;
+            for row in 0..40 {
+                ui.horizontal(|ui| {
+                    ui.spacing = 0.0;
+                    for col in 0..15 {
+                        let r = ui.alloc(vec2(86.0, 30.0));
+                        let c = if (row + col) % 2 == 0 { ui.surface.fill() } else { Color::TRANSPARENT };
+                        ui.painter().fill(r.shrink(1.0), 6.0, c);
+                        let name = format!("{}{}", (b'A' + col as u8) as char, row + 1);
+                        let st = TextStyle::new(13.0);
+                        let l = ui.layout_text(&name, &st);
+                        let tc = ui.surface.secondary();
+                        ui.painter().text(r.center() - l.size * 0.5, &l, tc);
+                    }
+                });
+            }
+        });
+    });
+
+    title(ui, "100 000 rows, only the visible ones are laid out");
+    ui.card(|ui| {
+        ScrollArea::new().id("long").height(240.0).show_rows(ui, 32.0, 100_000, |ui, rows| {
+            for i in rows {
+                let w = ui.available_width() - 12.0;
+                let r = ui.alloc(vec2(w, 32.0));
+                if i % 2 == 0 {
+                    let c = ui.surface.fill();
+                    ui.painter().fill(r, 9.0, c);
+                }
+                let (tc, sc) = (ui.surface.text(), ui.surface.secondary());
+                let a =
+                    ui.layout_text(&format!("Row {}", i + 1), &TextStyle::new(14.0).weight(Weight::Medium));
+                let b = ui.layout_text(&format!("#{:05X}", i * 7919 % 0xFFFFF), &TextStyle::new(13.0));
+                let mut p = ui.painter();
+                p.text(vec2(r.min.x + 12.0, r.center().y - a.size.y * 0.5), &a, tc);
+                p.text(vec2(r.max.x - 12.0 - b.size.x, r.center().y - b.size.y * 0.5), &b, sc);
+            }
+        });
+    });
+
+    title(ui, "Drag to reorder");
+    ui.card(|ui| {
+        ui.spacing = 6.0;
+        ui.reorder("tasks", &mut s.tasks, |ui, t| task_row(ui, t));
+    });
+
+    title(ui, "Drag between lists");
+    let w = ((ui.available_width() - 16.0) * 0.5).max(120.0);
+    let mut moved = None;
+    ui.horizontal(|ui| {
+        for (k, name) in ["To do", "Done"].iter().enumerate() {
+            ui.vertical(w, |ui| {
+                ui.strong(name);
+                let items = &s.boards[k];
+                let (_, got) = ui.drop_zone::<(usize, usize), _>(("board", k), vec2(w, 150.0), |ui| {
+                    ui.spacing = 6.0;
+                    for (i, t) in items.iter().enumerate() {
+                        ui.drag_source(("card", t.as_str()), (k, i), |ui| task_row_width(ui, t, w));
+                    }
+                });
+                if let Some((from, i)) = got
+                    && from != k
+                {
+                    moved = Some((from, i, k));
+                }
+            });
+        }
+    });
+    if let Some((from, i, to)) = moved {
+        let t = s.boards[from].remove(i);
+        s.boards[to].push(t);
+    }
+    ui.caption("Escape puts a dragged item back.");
+}
+
+fn task_row(ui: &mut Ui, t: &str) {
+    let w = ui.available_width();
+    task_row_width(ui, t, w);
+}
+
+fn task_row_width(ui: &mut Ui, t: &str, w: f32) {
+    let r = ui.alloc(vec2(w, 40.0));
+    let (fill, tc, sc) = (ui.surface.fill(), ui.surface.text(), ui.surface.tertiary());
+    let l = ui.layout_text(t, &TextStyle::new(15.0));
+    let mut p = ui.painter();
+    p.fill(r, 12.0, fill);
+    for k in 0..3 {
+        let y = r.center().y - 5.0 + 5.0 * k as f32;
+        p.line(vec2(r.max.x - 30.0, y), vec2(r.max.x - 16.0, y), 1.6, sc);
+    }
+    p.text(vec2(r.min.x + 14.0, r.center().y - l.size.y * 0.5), &l, tc);
+    if let Some(n) = ui.access(ui.make_id(("task", t)), rust_glass::access::Role::Label, r) {
+        n.label(t);
+    }
 }
 
 fn settings(s: &mut State, ui: &mut Ui) {

@@ -100,6 +100,9 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
         if r.clicked {
             *selected = i;
         }
+        if let Some(n) = ui.access(r.id, crate::access::Role::Tab, r.rect) {
+            n.label(*label).selected(*selected == i);
+        }
         if r.hovered {
             ui.ctx.cursor = Cursor::Pointer;
         }

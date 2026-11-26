@@ -23,6 +23,7 @@ pub const PAGES: &[(Icon, &str)] = &[
     (Icon::Ellipsis, "Menus & Pickers"),
     (Icon::Bell, "Feedback"),
     (Icon::Window, "Windows & Sheets"),
+    (Icon::Grid, "Lists & Drag"),
     (Icon::Gear, "Settings List"),
     (Icon::Palette, "Material Lab"),
     (Icon::Eye, "Reference"),
@@ -234,7 +235,20 @@ fn capture(dir: &str) -> Result<(), String> {
     shot(&mut hl, &mut app, "shot_alert", 6, 1, &[(mv(485.0, 417.0), 2), (down(), 2), (up(), 60)])?;
     shot(&mut hl, &mut app, "shot_toast", 6, 1, &[(mv(340.0, 417.0), 2), (down(), 2), (up(), 50)])?;
     shot(&mut hl, &mut app, "shot_sheet", 7, 2, &[(mv(531.0, 135.0), 2), (down(), 2), (up(), 70)])?;
-    shot(&mut hl, &mut app, "shot_ref", 10, 0, &drag(390.0, 500.0, 264.0))?;
+    shot(&mut hl, &mut app, "shot_ref", 11, 0, &drag(390.0, 500.0, 264.0))?;
+    let scroll = (mv(285.0, 290.0), 0);
+    let wheel = (vec![Event::Scroll(vec2(0.0, -720.0))], 50);
+    shot(&mut hl, &mut app, "shot_lists", 8, 1, &[scroll.clone(), wheel.clone()])?;
+    let carry = |a: Vec2, b: Vec2| {
+        let mut v = vec![scroll.clone(), wheel.clone(), (vec![Event::PointerMoved(a)], 2), (down(), 16)];
+        for i in 1..=14 {
+            v.push((vec![Event::PointerMoved(a.lerp(b, i as f32 / 14.0))], 1));
+        }
+        v.push((vec![], 20));
+        v
+    };
+    shot(&mut hl, &mut app, "shot_reorder", 8, 1, &carry(vec2(367.0, 285.0), vec2(380.0, 440.0)))?;
+    shot(&mut hl, &mut app, "shot_drop", 8, 1, &carry(vec2(347.0, 655.0), vec2(860.0, 640.0)))?;
     // Light theme over dark content: small glass flips on its own.
     app.appearance = 1;
     shot(&mut hl, &mut app, "shot_adapt", 1, 2, &[])?;
@@ -293,12 +307,12 @@ fn preview(dir: &str) -> Result<(), String> {
         ("lab-thick", Material::THICK, vec2(900.0, 190.0), 210.0),
         ("lab-regular", Material::REGULAR, vec2(560.0, 130.0), 160.0),
     ] {
-        go(&mut hl, &mut app, 9, 3);
+        go(&mut hl, &mut app, 10, 3);
         (app.s.lab, app.s.lab_pos, app.s.lab_size) = (m, pos, size);
         hl.settle(&mut app, 2.0);
         save(&hl, name)?;
     }
-    go(&mut hl, &mut app, 9, 4);
+    go(&mut hl, &mut app, 10, 4);
     (app.s.lab, app.s.lab_pos, app.s.lab_size) = (Material::CLEAR, vec2(905.0, 190.0), 200.0);
     hl.settle(&mut app, 2.0);
     save(&hl, "lab-grid")?;
@@ -341,9 +355,9 @@ fn preview(dir: &str) -> Result<(), String> {
     save(&hl, "feedback")?;
     go(&mut hl, &mut app, 7, 2);
     save(&hl, "windows")?;
-    go(&mut hl, &mut app, 8, 3);
+    go(&mut hl, &mut app, 9, 3);
     save(&hl, "settings")?;
-    go(&mut hl, &mut app, 10, 0);
+    go(&mut hl, &mut app, 11, 0);
     press(&mut hl, &mut app, 628.0, 147.0, 16);
     drag(&mut hl, &mut app, vec2(628.0, 147.0), vec2(470.0, 147.0), 30);
     for _ in 0..20 {

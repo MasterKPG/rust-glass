@@ -18,10 +18,10 @@ Goal: the glass holds up next to the reference footage and covers the components
 
 ### v0.2: Real apps
 Goal: a small app can ship with it.
-- Accessibility tree through AccessKit
-- Horizontal scrolling, virtualized lists, drag and drop
-- Text editing with undo and IME preview
-- Tested on Windows (Vulkan, DirectX 12), macOS and Linux
+- Accessibility tree through AccessKit (done on dev)
+- Horizontal scrolling, virtualized lists, drag and drop (done on dev)
+- Text editing with undo and IME preview (done on dev)
+- Tested on Windows (Vulkan, DirectX 12), macOS and Linux (Windows by hand, macOS and Linux in CI)
 
 ### v0.3: Motion
 Goal: transitions between screens keep glass on one continuous plane.

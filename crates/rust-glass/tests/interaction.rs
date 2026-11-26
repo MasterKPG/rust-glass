@@ -1,5 +1,7 @@
 //! Drives widgets with scripted input. No GPU needed.
 
+use std::cell::Cell;
+
 use rust_glass::input::{Event, Key, Modifiers};
 use rust_glass::prelude::*;
 
@@ -364,4 +366,251 @@ fn window_folds_moves_and_closes() {
     // The close button moved along: 24 points in from the left edge.
     rig.click(vec2(224.0, 223.0), &mut ui);
     assert!(!open);
+}
+
+#[test]
+fn screen_reader_sees_and_operates_widgets() {
+    use rust_glass::access::{Action, Role};
+    let mut rig = Rig::new();
+    rig.ctx.set_accessibility(true);
+    let (mut n, mut v, mut on, mut text) = (0, 0.5, false, String::new());
+    let ids = std::cell::RefCell::new(Vec::new());
+    let mut ui = |ctx: &mut Context| {
+        page(ctx, |ui| {
+            let b = ui.button("Save");
+            n += b.clicked() as u32;
+            let s = ui.add(Slider::new(&mut v, 0.0..=1.0).step(0.1));
+            ui.ctx.access_label(s.id, "Volume");
+            let t = ui.toggle(&mut on, "Wi-Fi");
+            let f = ui.text_edit(&mut text, "Name");
+            *ids.borrow_mut() = vec![b.id, s.id, t.id, f.id];
+        })
+    };
+    rig.idle(2, &mut ui);
+    let nodes = rig.ctx.access_nodes().to_vec();
+    let find = |role: Role| nodes.iter().find(|n| n.role == role).unwrap().clone();
+    assert_eq!(find(Role::Button).label, "Save");
+    assert_eq!(find(Role::Slider).label, "Volume");
+    assert_eq!(find(Role::Switch).toggled, Some(false));
+    assert!(find(Role::TextInput).focusable);
+    let ids = ids.borrow().clone();
+    let (b, s, t, f) = (ids[0], ids[1], ids[2], ids[3]);
+    rig.frame(&[Event::Access(b, Action::Click)], &mut ui);
+    rig.frame(&[Event::Access(s, Action::Increment)], &mut ui);
+    rig.frame(&[Event::Access(t, Action::Click)], &mut ui);
+    rig.frame(&[Event::Access(f, Action::SetValue("Ada".into()))], &mut ui);
+    rig.idle(2, &mut ui);
+    let tree = rig.ctx.access_update("Test");
+    let _ = &ui;
+    assert_eq!(n, 1);
+    assert!((v - 0.6).abs() < 1e-5, "{v}");
+    assert!(on);
+    assert_eq!(text, "Ada");
+    assert!(tree.nodes.len() >= 5);
+}
+
+#[test]
+fn no_tree_is_built_without_a_screen_reader() {
+    let mut rig = Rig::new();
+    let mut ui = |ctx: &mut Context| {
+        page(ctx, |ui| {
+            ui.button("Save");
+        })
+    };
+    rig.idle(2, &mut ui);
+    assert!(rig.ctx.access_nodes().is_empty());
+}
+
+fn cards(ui: &mut Ui, n: usize, first: &Cell<f32>) {
+    for i in 0..n {
+        let r = ui.button(&format!("Card {i}"));
+        if i == 0 {
+            first.set(r.rect.min.x);
+        }
+    }
+}
+
+#[test]
+fn horizontal_scroll_takes_sideways_input_and_leaves_vertical_to_the_page() {
+    let mut rig = Rig::new();
+    let (xc, yc) = (Cell::new(0.0), Cell::new(0.0));
+    let (x, y) = (|| xc.get(), || yc.get());
+    let mut ui = |ctx: &mut Context| {
+        page(ctx, |ui| {
+            ScrollArea::new().id("page").height(300.0).show(ui, |ui| {
+                yc.set(ui.label("Top").rect.min.y);
+                ScrollArea::horizontal().id("row").height(60.0).show(ui, |ui| cards(ui, 40, &xc));
+                for i in 0..30 {
+                    ui.label(&format!("Row {i}"));
+                }
+            });
+        })
+    };
+    rig.idle(3, &mut ui);
+    let (x0, y0) = (x(), y());
+    // Over the row: a sideways swipe moves it, a vertical wheel moves the page.
+    rig.frame(&[Event::PointerMoved(vec2(200.0, 100.0))], &mut ui);
+    rig.frame(&[Event::Scroll(vec2(-150.0, 0.0))], &mut ui);
+    rig.idle(60, &mut ui);
+    assert!((x() - (x0 - 150.0)).abs() < 1.0, "{x0} {}", x());
+    assert!((y() - y0).abs() < 0.5);
+    // Shift turns the wheel sideways.
+    let shift = Modifiers { shift: true, ..Default::default() };
+    rig.frame(&[Event::Modifiers(shift), Event::Scroll(vec2(0.0, -100.0))], &mut ui);
+    rig.frame(&[Event::Modifiers(Modifiers::default())], &mut ui);
+    rig.idle(60, &mut ui);
+    assert!((x() - (x0 - 250.0)).abs() < 1.0, "{x0} {}", x());
+    rig.frame(&[Event::Scroll(vec2(0.0, -80.0))], &mut ui);
+    rig.idle(60, &mut ui);
+    let _ = &ui;
+    assert!((y() - (y0 - 80.0)).abs() < 1.0, "{y0} {}", y());
+    assert!((x() - (x0 - 250.0)).abs() < 1.0);
+}
+
+#[test]
+fn long_lists_lay_out_only_visible_rows() {
+    let mut rig = Rig::new();
+    let cell = std::cell::RefCell::new(0..0);
+    let drawn = || cell.borrow().clone();
+    let mut ui = |ctx: &mut Context| {
+        page(ctx, |ui| {
+            ScrollArea::new().height(300.0).show_rows(ui, 24.0, 100_000, |ui, rows| {
+                *cell.borrow_mut() = rows.clone();
+                for i in rows {
+                    ui.label(&format!("Row {i}"));
+                }
+            });
+        })
+    };
+    rig.idle(3, &mut ui);
+    assert_eq!(drawn().start, 0);
+    assert!(drawn().len() < 20, "{:?}", drawn());
+    rig.frame(&[Event::PointerMoved(vec2(200.0, 200.0))], &mut ui);
+    for _ in 0..50 {
+        rig.frame(&[Event::Scroll(vec2(0.0, -2000.0))], &mut ui);
+    }
+    rig.idle(90, &mut ui);
+    let _ = &ui;
+    let stride = 24.0 + Theme::default().spacing;
+    assert!(drawn().start as f32 >= 90_000.0 / stride, "{:?}", drawn());
+    assert!(drawn().len() < 20);
+}
+
+#[test]
+fn drag_and_drop_moves_a_payload() {
+    let mut rig = Rig::new();
+    let mut left = vec!["a".to_string(), "b".to_string()];
+    let mut right: Vec<String> = Vec::new();
+    let second = Cell::new(Vec2::ZERO);
+    {
+        let mut ui = |ctx: &mut Context| {
+            page(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(200.0, |ui| {
+                        for (i, s) in left.iter().enumerate() {
+                            let r = ui.drag_source(("item", s.as_str()), i, |ui| {
+                                ui.button(s);
+                            });
+                            if i == 1 {
+                                second.set(r.rect.center());
+                            }
+                        }
+                    });
+                    let (_, got) = ui.drop_zone::<usize, _>("right", vec2(200.0, 200.0), |ui| {
+                        for s in &right {
+                            ui.label(s);
+                        }
+                    });
+                    if let Some(i) = got {
+                        right.push(left.remove(i));
+                    }
+                });
+            })
+        };
+        rig.idle(3, &mut ui);
+        // Second item of the left column onto the right zone.
+        rig.drag(second.get(), vec2(400.0, 120.0), &mut ui);
+        rig.idle(30, &mut ui);
+    }
+    assert_eq!(left, ["a"]);
+    assert_eq!(right, ["b"]);
+}
+
+#[test]
+fn reorder_moves_an_item_down() {
+    let mut rig = Rig::new();
+    let mut items = vec![1, 2, 3, 4];
+    let rects = std::cell::RefCell::new(Vec::new());
+    {
+        let mut ui = |ctx: &mut Context| {
+            page(ctx, |ui| {
+                rects.borrow_mut().clear();
+                ui.reorder("list", &mut items, |ui, i| {
+                    let r = ui.button(&format!("Item {i}")).rect;
+                    rects.borrow_mut().push(r);
+                });
+            })
+        };
+        rig.idle(3, &mut ui);
+        let (a, b) = (rects.borrow()[0].center(), rects.borrow()[2].max);
+        rig.drag(a, vec2(a.x, b.y - 4.0), &mut ui);
+        rig.idle(10, &mut ui);
+    }
+    assert_eq!(items, [2, 3, 1, 4]);
+}
+
+#[test]
+fn undo_and_redo_in_a_text_field() {
+    let mut rig = Rig::new();
+    let mut s = String::new();
+    let ctrl = Modifiers { ctrl: true, command: true, ..Default::default() };
+    let ctrl_shift = Modifiers { shift: true, ..ctrl };
+    let none = Modifiers::default();
+    let mut states = Vec::new();
+    {
+        let mut ui = |ctx: &mut Context| {
+            page(ctx, |ui| {
+                ui.add(TextEdit::new(&mut s).width(300.0));
+            })
+        };
+        rig.idle(2, &mut ui);
+        rig.click(vec2(120.0, 66.0), &mut ui);
+        for c in ["o", "n", "e", " ", "t", "w", "o", "o"] {
+            rig.frame(&[Event::Text(c.into())], &mut ui);
+        }
+        rig.frame(&[Event::Key(Key::Backspace)], &mut ui);
+        let z = Key::Char('z');
+        for m in [ctrl, ctrl, ctrl, ctrl, ctrl_shift, ctrl_shift] {
+            rig.frame(&[Event::Modifiers(m), Event::Key(z), Event::Modifiers(none)], &mut ui);
+            rig.ctx.set_accessibility(true);
+            rig.frame(&[], &mut ui);
+            states.push(rig.ctx.access_nodes().iter().find_map(|n| n.value.clone()).unwrap_or_default());
+            rig.ctx.set_accessibility(false);
+        }
+    }
+    // The backspace is a step of its own, typing undoes a word at a time.
+    assert_eq!(states, ["one twoo", "one ", "", "", "one ", "one twoo"]);
+}
+
+#[test]
+fn input_method_composes_before_it_commits() {
+    let mut rig = Rig::new();
+    let mut s = String::from("ab");
+    let mut changed = 0;
+    {
+        let mut ui = |ctx: &mut Context| {
+            page(ctx, |ui| {
+                changed += ui.add(TextEdit::new(&mut s).width(300.0)).changed() as u32;
+            })
+        };
+        rig.idle(2, &mut ui);
+        rig.click(vec2(300.0, 66.0), &mut ui);
+        rig.frame(&[Event::Preedit("にほ".into(), Some((6, 6)))], &mut ui);
+        // Keys belong to the input method while it composes.
+        rig.frame(&[Event::Key(Key::Backspace)], &mut ui);
+        assert!(rig.ctx.ime.is_some(), "the caret is reported to the input method");
+        rig.frame(&[Event::Preedit(String::new(), None), Event::Text("日本".into())], &mut ui);
+    }
+    assert_eq!(s, "ab日本");
+    assert_eq!(changed, 1);
 }

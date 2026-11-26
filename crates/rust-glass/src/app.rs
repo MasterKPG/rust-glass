@@ -1,18 +1,19 @@
-//! Window host: event loop, surface, clipboard. Draws only when something
-//! changes; an idle window uses no CPU or GPU time.
+//! Window host: event loop, surface, clipboard, input method and the bridge
+//! to screen readers. Draws only when something changes; an idle window uses
+//! no CPU or GPU time.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalSize};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WKey, NamedKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::context::{Context, Cursor, HostCmd};
-use crate::geom::vec2;
+use crate::geom::{Rect, vec2};
 use crate::gpu::{FrameStats, Gpu, Renderer};
 use crate::input::{Event, Key, Modifiers};
 
@@ -90,6 +91,9 @@ struct Live {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     cursor: Cursor,
+    access: accesskit_winit::Adapter,
+    /// Caret rectangle given to the input method, `None` while no field has focus.
+    ime: Option<Rect>,
 }
 
 struct Host<A: App> {
@@ -97,6 +101,7 @@ struct Host<A: App> {
     ctx: Context,
     options: Options,
     live: Option<Live>,
+    proxy: EventLoopProxy<accesskit_winit::Event>,
     events: Vec<Event>,
     start: Instant,
     last: Instant,
@@ -110,12 +115,13 @@ struct Host<A: App> {
 /// Open a window and run `app` until it closes.
 pub fn run(options: Options, app: impl App + 'static) -> Result<(), String> {
     let start = Instant::now();
-    let el = EventLoop::new().map_err(|e| e.to_string())?;
+    let el = EventLoop::with_user_event().build().map_err(|e| e.to_string())?;
     let mut host = Host {
         app,
         ctx: Context::new(),
         options,
         live: None,
+        proxy: el.create_proxy(),
         events: Vec::new(),
         start,
         last: Instant::now(),
@@ -142,7 +148,8 @@ impl<A: App> Host<A> {
             // Shown after the first frame, so there is no flash.
             .with_visible(false);
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
-        window.set_ime_allowed(true);
+        // Must exist before the window is shown.
+        let access = accesskit_winit::Adapter::with_event_loop_proxy(el, &window, self.proxy.clone());
         fit_on_screen(&window);
         let instance = Gpu::instance();
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
@@ -165,7 +172,7 @@ impl<A: App> Host<A> {
         surface.configure(&gpu.device, &config);
         let renderer = Renderer::new(&gpu, format);
         log::info!("rendering on {}", gpu.describe());
-        Ok(Live { window, gpu, surface, config, renderer, cursor: Cursor::Default })
+        Ok(Live { window, gpu, surface, config, renderer, cursor: Cursor::Default, access, ime: None })
     }
 
     fn frame(&mut self) {
@@ -194,6 +201,25 @@ impl<A: App> Host<A> {
         let events = std::mem::take(&mut self.events);
         let time = (now - self.start).as_secs_f64();
         run_ui(&mut self.ctx, &mut self.app, &self.info, size, ppp, time, &events);
+        if self.ctx.accessibility() {
+            let (ctx, title) = (&self.ctx, &self.options.title);
+            live.access.update_if_active(|| ctx.access_update(title));
+        }
+        if live.ime != self.ctx.ime {
+            match self.ctx.ime {
+                Some(r) => {
+                    if live.ime.is_none() {
+                        live.window.set_ime_allowed(true);
+                    }
+                    live.window.set_ime_cursor_area(
+                        LogicalPosition::new(r.min.x, r.min.y),
+                        LogicalSize::new(r.width().max(1.0), r.height().max(1.0)),
+                    );
+                }
+                None => live.window.set_ime_allowed(false),
+            }
+            live.ime = self.ctx.ime;
+        }
         let ui_done = Instant::now();
         let smooth = |old: f32, new: f32| if old == 0.0 { new } else { old * 0.9 + new * 0.1 };
         self.info.ui_ms = smooth(self.info.ui_ms, (ui_done - now).as_secs_f32() * 1000.0);
@@ -270,7 +296,21 @@ impl<A: App> Host<A> {
     }
 }
 
-impl<A: App> ApplicationHandler for Host<A> {
+impl<A: App> ApplicationHandler<accesskit_winit::Event> for Host<A> {
+    fn user_event(&mut self, _: &ActiveEventLoop, ev: accesskit_winit::Event) {
+        use accesskit_winit::WindowEvent as W;
+        match ev.window_event {
+            W::InitialTreeRequested => self.ctx.set_accessibility(true),
+            W::ActionRequested(req) => {
+                if let Some((id, a)) = crate::access::from_accesskit(&req) {
+                    self.events.push(Event::Access(id, a));
+                }
+            }
+            W::AccessibilityDeactivated => self.ctx.set_accessibility(false),
+        }
+        self.redraw = true;
+    }
+
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.live.is_some() {
             return;
@@ -293,6 +333,9 @@ impl<A: App> ApplicationHandler for Host<A> {
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, ev: WindowEvent) {
+        if let Some(l) = &mut self.live {
+            l.access.process_event(&l.window, &ev);
+        }
         let ppp = self.live.as_ref().map_or(1.0, |l| l.window.scale_factor());
         let mut dirty = true;
         match ev {
@@ -368,7 +411,12 @@ impl<A: App> ApplicationHandler for Host<A> {
                     self.events.push(Event::Text(t.to_string()));
                 }
             }
-            WindowEvent::Ime(winit::event::Ime::Commit(t)) => self.events.push(Event::Text(t)),
+            WindowEvent::Ime(Ime::Commit(t)) => {
+                self.events.push(Event::Preedit(String::new(), None));
+                self.events.push(Event::Text(t));
+            }
+            WindowEvent::Ime(Ime::Preedit(t, c)) => self.events.push(Event::Preedit(t, c)),
+            WindowEvent::Ime(Ime::Disabled) => self.events.push(Event::Preedit(String::new(), None)),
             WindowEvent::Focused(f) => self.events.push(Event::Focus(f)),
             WindowEvent::DroppedFile(p) => self.app.file_dropped(&mut self.ctx, &p),
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {}

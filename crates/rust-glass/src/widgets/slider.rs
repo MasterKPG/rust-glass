@@ -1,5 +1,6 @@
 use std::ops::RangeInclusive;
 
+use crate::access::{Action, Role};
 use crate::anim::Tuning;
 use crate::color::Color;
 use crate::context::{Cursor, Response, Sense};
@@ -105,6 +106,12 @@ impl Widget for Slider<'_> {
                 *self.value = (*self.value - s).max(lo);
             }
         }
+        if let Some(v) = ui.ctx.take_access_number(r.id) {
+            *self.value = (v as f32).clamp(lo, hi);
+        }
+        if let Some(n) = ui.access(r.id, Role::Slider, r.rect) {
+            n.numeric(*self.value as f64, lo as f64, hi as f64, self.step.map(|s| s as f64));
+        }
         r.changed = before != *self.value;
         if r.hovered || r.held {
             ui.ctx.cursor = Cursor::Grab;
@@ -204,6 +211,12 @@ impl Widget for DragValue<'_> {
             let d = ui.ctx.input.key(Key::Right) as i32 - ui.ctx.input.key(Key::Left) as i32;
             *self.value = (*self.value + d as f32 * self.speed).clamp(lo, hi);
         }
+        if let Some(v) = ui.ctx.take_access_number(r.id) {
+            *self.value = (v as f32).clamp(lo, hi);
+        }
+        if let Some(n) = ui.access(r.id, Role::SpinButton, r.rect) {
+            n.numeric(*self.value as f64, lo as f64, hi as f64, Some(self.speed as f64)).value(text.clone());
+        }
         r.changed = before != *self.value;
         let gel = crate::widgets::gel::Gel::update(ui.ctx, &r, 0.6);
         let (c, t) = (ui.surface.fill(), ui.surface.text());
@@ -233,13 +246,26 @@ impl Widget for Stepper<'_> {
         let a = ui.interact(id.with(0), l, Sense::Click);
         let b = ui.interact(id.with(1), rr, Sense::Click);
         let before = *self.value;
-        if a.clicked {
+        if a.clicked || ui.ctx.access_requested(id, &Action::Decrement) {
             *self.value -= 1;
         }
-        if b.clicked {
+        if b.clicked || ui.ctx.access_requested(id, &Action::Increment) {
             *self.value += 1;
         }
+        if let Some(v) = ui.ctx.take_access_number(id) {
+            *self.value = v.round() as i32;
+        }
         *self.value = (*self.value).clamp(*self.range.start(), *self.range.end());
+        let (lo, hi) = (*self.range.start() as f64, *self.range.end() as f64);
+        if let Some(n) = ui.access(id, Role::SpinButton, rect) {
+            n.numeric(*self.value as f64, lo, hi, Some(1.0));
+        }
+        if let Some(n) = ui.access(a.id, Role::Button, l) {
+            n.label("Decrease");
+        }
+        if let Some(n) = ui.access(b.id, Role::Button, rr) {
+            n.label("Increase");
+        }
         res.changed = before != *self.value;
         let ga = crate::widgets::gel::Gel::update(ui.ctx, &a, 1.0);
         let gb = crate::widgets::gel::Gel::update(ui.ctx, &b, 1.0);

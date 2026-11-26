@@ -2,6 +2,7 @@
 //! windows. They materialize by forming from another shape and by ramping their
 //! optics, not by fading a flat rectangle.
 
+use crate::access::Role;
 use crate::anim::{Spring, SpringRect, Tuning};
 use crate::color::Color;
 use crate::context::{Context, Cursor, Id, Order, Response, Sense};
@@ -161,6 +162,12 @@ impl Widget for MenuItem<'_> {
         let w = ui.available_width();
         let mut r = ui.alloc_interact(vec2(w, 36.0), Sense::Click);
         ui.ctx.focusable(r.id);
+        if let Some(n) = ui.access(r.id, Role::MenuItem, r.rect) {
+            n.label(self.label);
+            if self.checked {
+                n.selected(true);
+            }
+        }
         // Press on the menu button, slide, release on an item.
         if r.rect.contains(ui.ctx.pointer_or(vec2(-1.0, -1.0)))
             && ui.ctx.input.released
@@ -246,6 +253,11 @@ impl<'a> MenuButton<'a> {
         }
         if r.clicked && !ui.ctx.popup_open(r.id) {
             ui.ctx.set_popup(r.id, true);
+        }
+        let open = ui.ctx.popup_open(r.id);
+        let role = if self.chevron { Role::ComboBox } else { Role::Button };
+        if let Some(n) = ui.access(r.id, role, r.rect) {
+            n.label(if has_text { self.label } else { self.icon.map_or("Menu", Icon::name) }).expanded(open);
         }
         let t = popup_progress(ui.ctx, r.id);
         let gel = Gel::update(ui.ctx, &r, 1.0);

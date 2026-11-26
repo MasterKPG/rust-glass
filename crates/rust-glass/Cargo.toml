@@ -14,6 +14,8 @@ categories = ["gui", "graphics"]
 [dependencies]
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 winit = "0.30.13"
+accesskit = "0.25.2"
+accesskit_winit = "0.34.2"
 cosmic-text = "0.19"
 zeno = "0.3.3"
 bytemuck = { version = "1.25", features = ["derive"] }
