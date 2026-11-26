@@ -189,10 +189,10 @@ fn tab_bar_follows_a_drag() {
     let mut rig = Rig::new();
     let mut sel = 0;
     let mut ui = |ctx: &mut Context| {
-        TabBar {
-            selected: &mut sel,
-            tabs: &[(Icon::Home, "A"), (Icon::Star, "B"), (Icon::Heart, "C"), (Icon::Search, "D")],
-        }
+        TabBar::new(
+            &mut sel,
+            &[(Icon::Home, "A"), (Icon::Star, "B"), (Icon::Heart, "C"), (Icon::Search, "D")],
+        )
         .show_at(ctx, Id::new("t"), vec2(400.0, 500.0));
     };
     rig.idle(3, &mut ui);
@@ -216,7 +216,7 @@ fn typing_selecting_and_replacing() {
         rig.frame(&[Event::Text("Hello glass".into())], &mut ui);
         let ctrl = Modifiers { ctrl: true, command: true, ..Default::default() };
         rig.frame(&[Event::Modifiers(ctrl), Event::Key(Key::Char('a')), Event::Key(Key::Char('c'))], &mut ui);
-        copied.append(&mut rig.ctx.host);
+        copied.append(&mut rig.ctx.host_commands);
         rig.frame(&[Event::Modifiers(Modifiers::default()), Event::Text("X".into())], &mut ui);
         rig.frame(&[Event::Text("YZ".into())], &mut ui);
         rig.frame(&[Event::Key(Key::Left), Event::Key(Key::Backspace)], &mut ui);
@@ -232,7 +232,7 @@ fn menu_opens_picks_and_closes() {
     {
         let mut ui = |ctx: &mut Context| {
             page(ctx, |ui| {
-                ComboBox { selected: &mut sel, options: &["One", "Two", "Three"], width: 160.0 }.show(ui);
+                ComboBox::new(&mut sel, &["One", "Two", "Three"]).width(160.0).show(ui);
             })
         };
         rig.idle(2, &mut ui);
@@ -338,7 +338,7 @@ fn everything_comes_to_rest() {
             ui.segmented(&mut sel, &["A", "B"]);
             ui.progress(0.4);
         });
-        TabBar { selected: &mut tab, tabs: &[(Icon::Home, "A"), (Icon::Star, "B")] }.show_at(
+        TabBar::new(&mut tab, &[(Icon::Home, "A"), (Icon::Star, "B")]).show_at(
             ctx,
             Id::new("t"),
             vec2(400.0, 560.0),
@@ -370,7 +370,7 @@ fn window_folds_moves_and_closes() {
 
 #[test]
 fn screen_reader_sees_and_operates_widgets() {
-    use rust_glass::access::{Action, Role};
+    use rust_glass::accessibility::{Action, Role};
     let mut rig = Rig::new();
     rig.ctx.set_accessibility(true);
     let (mut n, mut v, mut on, mut text) = (0, 0.5, false, String::new());

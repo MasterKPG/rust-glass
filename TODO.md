@@ -3,7 +3,10 @@
 Short-term work. Long-term plan lives in [ROADMAP.md](ROADMAP.md).
 
 ## In progress
-- [ ] Second round of visual corrections after review
+- [x] Clear names and one module per widget
+- [ ] API docs for every public item
+- [ ] Showcase that is easier to read
+- [ ] Shorter README and guide
 
 ## Next
 - [ ] Check the macOS and Linux renders from CI against the Windows ones

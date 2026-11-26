@@ -1,11 +1,11 @@
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::access::Role;
-use crate::anim::Tuning;
+use crate::accessibility::Role;
+use crate::animation::Tuning;
 use crate::color::Color;
-use crate::context::{Cursor, HostCmd, Response, Sense};
-use crate::geom::{Rect, vec2};
-use crate::icons::Icon;
+use crate::context::{Cursor, HostCommand, Response, Sense};
+use crate::geometry::{Rect, vec2};
+use crate::icon::Icon;
 use crate::input::Key;
 use crate::material::{Corner, Glass};
 use crate::text::{TextLayout, TextStyle};
@@ -173,7 +173,7 @@ impl Widget for TextEdit<'_> {
         let line = (font * 1.28).ceil();
         let h = if multi { line * self.rows as f32 + 22.0 } else { ui.ctx.theme.control_height };
         let w = self.width.unwrap_or_else(|| ui.available_width().clamp(80.0, 420.0));
-        let mut r = ui.alloc_interact(vec2(w, h), Sense::Drag);
+        let mut r = ui.allocate_response(vec2(w, h), Sense::Drag);
         let id = r.id;
         ui.ctx.focusable(id);
         let mut e: Edit = ui.ctx.get(id);
@@ -294,7 +294,7 @@ impl Widget for TextEdit<'_> {
                     Key::Char(c @ ('c' | 'x')) if m.command && !self.password => {
                         let (a, b) = e.range();
                         if a != b {
-                            ui.ctx.host.push(HostCmd::Copy(self.text[a..b].to_string()));
+                            ui.ctx.host_commands.push(HostCommand::Copy(self.text[a..b].to_string()));
                             if c == 'x' {
                                 hist.record(Kind::Other, self.text, &e, now);
                                 e.replace(self.text, "");

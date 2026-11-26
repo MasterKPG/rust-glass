@@ -1,7 +1,7 @@
 //! The glass material: parameters, presets and how they adapt to the backdrop.
 
 use crate::color::Color;
-use crate::geom::{Rect, Vec2, lerp, vec2};
+use crate::geometry::{Rect, Vec2, lerp, vec2};
 
 /// Corner shape. Rounded corners are continuous (curvature ramps up instead of
 /// jumping), capsules are slightly squared off the way iOS draws them.
@@ -16,7 +16,7 @@ pub enum Corner {
         power: f32,
     },
     /// True circle or stadium, without smoothing.
-    Round(f32),
+    Circular(f32),
 }
 
 impl From<f32> for Corner {
@@ -50,7 +50,7 @@ impl Corner {
                 let k = room.clamp(0.0, 1.0);
                 (Vec2::splat(lerp(r.min(half.x), want, k).max(0.01)), lerp(2.0, 2.83, k))
             }
-            Corner::Round(r) => (Vec2::splat(r.min(half.x)), 2.0),
+            Corner::Circular(r) => (Vec2::splat(r.min(half.x)), 2.0),
         }
     }
 }
@@ -72,10 +72,10 @@ pub struct Material {
     /// and the pinch up and down only.
     pub sideways: f32,
     /// Chromatic aberration, as a fraction of the bend.
-    pub chroma: f32,
+    pub dispersion: f32,
     /// 0 disperses evenly around the outline. At 1 only the corners do, with
     /// the order of the colors alternating from corner to corner.
-    pub corner_chroma: f32,
+    pub corner_dispersion: f32,
     pub blur: f32,
     pub magnify: f32,
     /// Backdrop range mapping on a bright backdrop.
@@ -90,7 +90,7 @@ pub struct Material {
     pub rim_base: f32,
     pub dark_edge: f32,
     /// Light spilling in from the surroundings.
-    pub bleed: f32,
+    pub light_spill: f32,
     pub inner_glow: f32,
     pub inner_shadow: f32,
     pub shadow: f32,
@@ -104,7 +104,7 @@ pub struct Material {
     pub tint_follow: f32,
     /// How much the frost and reduced transparency settings apply. A lens that
     /// sits above its own label must stay clear.
-    pub frosts: f32,
+    pub glass_tint_response: f32,
 }
 
 impl Material {
@@ -117,8 +117,8 @@ impl Material {
         pinch: 0.0,
         pinch_width: 20.0,
         sideways: 0.0,
-        chroma: 0.10,
-        corner_chroma: 0.0,
+        dispersion: 0.10,
+        corner_dispersion: 0.0,
         blur: 4.2,
         magnify: 1.0,
         light_range: (0.62, 1.0),
@@ -128,7 +128,7 @@ impl Material {
         rim_width: 0.8,
         rim_base: 0.34,
         dark_edge: 0.22,
-        bleed: 0.18,
+        light_spill: 0.18,
         inner_glow: 0.16,
         inner_shadow: 0.05,
         shadow: 0.16,
@@ -137,7 +137,7 @@ impl Material {
         shadow_tint: 0.35,
         tint: None,
         tint_follow: 1.0,
-        frosts: 1.0,
+        glass_tint_response: 1.0,
     };
 
     /// Permanently transparent, for media backgrounds.
@@ -146,7 +146,7 @@ impl Material {
         depth: 18.0,
         outer_refraction: 4.0,
         outer_depth: 4.0,
-        chroma: 0.20,
+        dispersion: 0.20,
         blur: 0.5,
         light_range: (0.10, 1.0),
         dark_range: (0.04, 0.92),
@@ -163,7 +163,7 @@ impl Material {
         depth: 26.0,
         outer_refraction: 4.0,
         outer_depth: 5.0,
-        chroma: 0.10,
+        dispersion: 0.10,
         blur: 11.0,
         light_range: (0.68, 1.0),
         dark_range: (0.09, 0.44),
@@ -171,7 +171,7 @@ impl Material {
         shadow: 0.26,
         shadow_radius: 34.0,
         shadow_y: 14.0,
-        bleed: 0.26,
+        light_spill: 0.26,
         inner_glow: 0.10,
         ..Material::REGULAR
     };
@@ -182,7 +182,7 @@ impl Material {
         depth: 9.4,
         outer_refraction: 6.0,
         outer_depth: 1.6,
-        chroma: 0.17,
+        dispersion: 0.17,
         blur: 0.0,
         light_range: (0.15, 1.0),
         dark_range: (0.06, 1.0),
@@ -191,14 +191,14 @@ impl Material {
         rim_width: 0.75,
         rim_base: 0.06,
         dark_edge: 0.92,
-        bleed: 0.0,
+        light_spill: 0.0,
         inner_glow: 0.20,
         inner_shadow: 0.09,
         shadow: 0.17,
         shadow_radius: 9.0,
         shadow_y: 5.0,
         shadow_tint: 0.95,
-        frosts: 0.0,
+        glass_tint_response: 0.0,
         ..Material::REGULAR
     };
 
@@ -212,8 +212,8 @@ impl Material {
         outer_depth: 2.0,
         pinch: 4.1,
         pinch_width: 20.0,
-        chroma: 0.75,
-        corner_chroma: 1.0,
+        dispersion: 0.75,
+        corner_dispersion: 1.0,
         light_range: (0.0, 1.0),
         dark_range: (0.0, 1.0),
         saturation: 1.05,
@@ -237,8 +237,8 @@ impl Material {
         outer_refraction: 0.0,
         pinch: 0.0,
         sideways: 0.5,
-        chroma: 0.18,
-        corner_chroma: 0.0,
+        dispersion: 0.18,
+        corner_dispersion: 0.0,
         saturation: 1.0,
         inner_glow: 0.0,
         shadow: 0.0,
@@ -276,8 +276,8 @@ impl Material {
             pinch: l(self.pinch, o.pinch),
             pinch_width: l(self.pinch_width, o.pinch_width),
             sideways: l(self.sideways, o.sideways),
-            chroma: l(self.chroma, o.chroma),
-            corner_chroma: l(self.corner_chroma, o.corner_chroma),
+            dispersion: l(self.dispersion, o.dispersion),
+            corner_dispersion: l(self.corner_dispersion, o.corner_dispersion),
             blur: l(self.blur, o.blur),
             magnify: l(self.magnify, o.magnify),
             light_range: l2(self.light_range, o.light_range),
@@ -287,7 +287,7 @@ impl Material {
             rim_width: l(self.rim_width, o.rim_width),
             rim_base: l(self.rim_base, o.rim_base),
             dark_edge: l(self.dark_edge, o.dark_edge),
-            bleed: l(self.bleed, o.bleed),
+            light_spill: l(self.light_spill, o.light_spill),
             inner_glow: l(self.inner_glow, o.inner_glow),
             inner_shadow: l(self.inner_shadow, o.inner_shadow),
             shadow: l(self.shadow, o.shadow),
@@ -301,7 +301,7 @@ impl Material {
                 (None, Some(b)) => Some(b.fade(t)),
             },
             tint_follow: l(self.tint_follow, o.tint_follow),
-            frosts: l(self.frosts, o.frosts),
+            glass_tint_response: l(self.glass_tint_response, o.glass_tint_response),
         }
     }
 }
@@ -338,7 +338,7 @@ pub struct Glass {
     /// Extra shadow, set from backdrop contrast.
     pub shadow_boost: f32,
     /// Even brightening, the press feedback.
-    pub lit: f32,
+    pub brightness: f32,
     /// Extra rotation of the highlights in radians.
     pub light_bend: f32,
     /// Measure the backdrop for this slot.
@@ -357,7 +357,7 @@ impl Glass {
             presence: 1.0,
             darkness: 0.0,
             shadow_boost: 0.0,
-            lit: 0.0,
+            brightness: 0.0,
             light_bend: 0.0,
             stat_key: None,
         }

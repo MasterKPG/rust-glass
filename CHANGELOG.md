@@ -4,6 +4,19 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+- `Context::remove_image` frees an image.
+
+### Changed
+- Breaking: each widget has its own module, such as `widgets::menu`, `widgets::dialog` and `widgets::toggle`. The old `bars`, `controls`, `overlay`, `gel` and `dnd` modules are gone. The prelude still exports every widget.
+- Breaking: `Checkbox`, `Radio`, `ProgressBar`, `Gauge`, `Spinner`, `Image`, `Collapsing`, `ColorPicker`, `Stepper`, `SplitButton`, `TabBar` and `ComboBox` are created with `new` and builder methods instead of struct literals. `Row` is now `SettingsRow`.
+- Breaking: renamed modules `anim` to `animation`, `geom` to `geometry`, `access` to `accessibility` and `icons` to `icon`.
+- Breaking: renamed `Spring::x` and `Spring::v` to `value` and `velocity`, `Spring::at` to `Spring::new`, `Spring2` to `Spring2d`, `Context::animate2` to `animate_vec2` and `Context::tune` to `tuning`.
+- Breaking: renamed `Context::ppp` to `pixels_per_point`, `Context::host` to `host_commands`, `HostCmd` to `HostCommand`, `Context::copy` to `copy_text`, `Context::adapt` to `backdrop` and its result `Adapted` to `Backdrop`.
+- Breaking: renamed `Ui::max` to `max_rect`, `Ui::alloc` to `allocate`, `Ui::alloc_interact` to `allocate_response`, `Ui::text_with` to `styled_text` and `Response::tip` to `on_hover_text`.
+- Breaking: renamed `Theme::frost` to `glass_tint`, `Material::frosts` to `glass_tint_response`, `Material::chroma` to `dispersion`, `Material::bleed` to `light_spill`, `Glass::lit` to `brightness`, `Corner::Round` to `Corner::Circular` and `Tuning::GEL` to `Tuning::PRESS`. The `knob` and `track` color setters of sliders and segmented controls are now `thumb_color` and `track_color`.
+- Breaking: the renderer, draw lists and glyph atlas are no longer public. `Context::center` is removed, use `ctx.screen.center()`.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added

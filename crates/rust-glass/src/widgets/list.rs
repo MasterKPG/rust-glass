@@ -1,80 +1,14 @@
-//! Floating bars and panels.
+//! Lists: navigation list, settings rows, sections and tables.
 
-use crate::anim::Tuning;
+use crate::accessibility::Role;
+use crate::animation::Tuning;
 use crate::color::Color;
-use crate::context::{Context, Cursor, Id, Order, Sense};
-use crate::geom::{Rect, vec2};
-use crate::icons::Icon;
-use crate::material::{Corner, Glass, Material};
+use crate::context::{Cursor, Sense};
+use crate::geometry::{Rect, Vec2, vec2};
+use crate::icon::Icon;
+use crate::material::Corner;
 use crate::text::{TextStyle, Weight};
 use crate::ui::Ui;
-
-/// Glass panel at a fixed place above the content.
-pub struct Panel {
-    id: Id,
-    rect: Rect,
-    corner: Corner,
-    material: Option<Material>,
-    pad: f32,
-    flips: bool,
-    order: Order,
-}
-
-impl Panel {
-    pub fn new(id: impl std::hash::Hash, rect: Rect) -> Self {
-        Self {
-            id: Id::new(("panel", Id::new(id).0)),
-            rect,
-            corner: Corner::Radius(28.0),
-            material: None,
-            pad: 14.0,
-            flips: false,
-            order: Order::Bar,
-        }
-    }
-    pub fn corner(mut self, c: impl Into<Corner>) -> Self {
-        self.corner = c.into();
-        self
-    }
-    pub fn material(mut self, m: Material) -> Self {
-        self.material = Some(m);
-        self
-    }
-    pub fn padding(mut self, p: f32) -> Self {
-        self.pad = p;
-        self
-    }
-    /// Small panels may switch between light and dark.
-    pub fn flips(mut self) -> Self {
-        self.flips = true;
-        self
-    }
-    pub fn order(mut self, o: Order) -> Self {
-        self.order = o;
-        self
-    }
-
-    pub fn show<R>(mut self, ctx: &mut Context, f: impl FnOnce(&mut Ui) -> R) -> R {
-        self.rect = self.rect.snap(ctx.ppp);
-        let layer = ctx.layer(self.id, self.order);
-        ctx.interact(self.id.with("block"), self.rect, Rect::EVERYTHING, layer, Sense::Hover);
-        let m = self.material.unwrap_or(ctx.theme.thick);
-        let mut g = Glass::new(self.rect, self.corner, m);
-        let a = ctx.prepare_glass(self.id, &mut g, self.flips);
-        ctx.painter(layer, Rect::EVERYTHING).glass(&g);
-        let mut ui = Ui::new(ctx, layer, self.id, self.rect.shrink(self.pad));
-        ui.surface = a.surface();
-        f(&mut ui)
-    }
-}
-
-/// Plain region of the window, without a surface of its own.
-pub fn region<R>(ctx: &mut Context, id: impl std::hash::Hash, rect: Rect, f: impl FnOnce(&mut Ui) -> R) -> R {
-    let id = Id::new(("region", Id::new(id).0));
-    let layer = ctx.layer(id, Order::Content);
-    let mut ui = Ui::new(ctx, layer, id, rect);
-    f(&mut ui)
-}
 
 /// Vertical navigation list with a sliding highlight. Returns true on change.
 pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bool {
@@ -86,7 +20,7 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
     ui.spacing = 2.0;
     let top = ui.next_pos().y;
     let y = ui.ctx.animate(id, *selected as f32, Tuning::new(0.34, 0.78));
-    let v = ui.ctx.get::<crate::anim::Spring>(id).v;
+    let v = ui.ctx.get::<crate::animation::Spring>(id).velocity;
     let accent = ui.ctx.theme.accent.lerp(Color::WHITE, 0.35 * ui.surface.dark());
     // The highlight stretches along its way.
     let s = (v.abs() * 0.9).min(9.0);
@@ -95,12 +29,12 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
     let c = ui.surface.fill_strong();
     ui.painter().fill(hl, Corner::Capsule, c);
     for (i, (icon, label)) in items.iter().enumerate() {
-        let r = ui.alloc_interact(vec2(w, h), Sense::Click);
+        let r = ui.allocate_response(vec2(w, h), Sense::Click);
         ui.ctx.focusable(r.id);
         if r.clicked {
             *selected = i;
         }
-        if let Some(n) = ui.access(r.id, crate::access::Role::Tab, r.rect) {
+        if let Some(n) = ui.access(r.id, crate::accessibility::Role::Tab, r.rect) {
             n.label(*label).selected(*selected == i);
         }
         if r.hovered {
@@ -126,7 +60,7 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
 pub fn section(ui: &mut Ui, title: &str, f: impl FnOnce(&mut Ui)) {
     let c = ui.surface.secondary();
     let st = TextStyle::new(13.0).weight(Weight::Semibold);
-    ui.text_with(title, st, c);
+    ui.styled_text(title, st, c);
     ui.card(f);
 }
 
@@ -141,7 +75,7 @@ pub fn table(ui: &mut Ui, header: &[&str], rows: &[Vec<String>]) {
     let old = ui.spacing;
     ui.spacing = 0.0;
     let line = |ui: &mut Ui, cells: &[&str], st: &TextStyle, c: Color, h: f32, i: usize| {
-        let r = ui.alloc_interact(vec2(total, h), Sense::Hover);
+        let r = ui.allocate_response(vec2(total, h), Sense::Hover);
         let hov = ui.ctx.animate_bool(r.id, r.hovered && i > 0, Tuning::SNAP);
         let ls: Vec<_> = cells.iter().map(|t| ui.layout_text(t, st)).collect();
         let f = ui.surface.fill();
@@ -162,4 +96,60 @@ pub fn table(ui: &mut Ui, header: &[&str], rows: &[Vec<String>]) {
         line(ui, &cells, &bs, tc, 34.0, i + 1);
     }
     ui.spacing = old;
+}
+
+/// A row of a settings list: an optional colored icon, a title, and controls
+/// at the trailing end. Screen readers name the trailing controls after the
+/// title.
+pub struct SettingsRow<'a> {
+    icon: Option<(Icon, Color)>,
+    title: &'a str,
+}
+
+impl<'a> SettingsRow<'a> {
+    /// Creates a row with a title.
+    pub fn new(title: &'a str) -> Self {
+        Self { icon: None, title }
+    }
+    /// Shows `icon` in white on a rounded square of `color` before the title.
+    pub fn icon(mut self, icon: Icon, color: Color) -> Self {
+        self.icon = Some((icon, color));
+        self
+    }
+
+    /// Shows the row. `trailing` draws the controls at its end.
+    pub fn show(self, ui: &mut Ui, trailing: impl FnOnce(&mut Ui)) {
+        let w = ui.available_width();
+        let r = ui.allocate(vec2(w, 40.0));
+        let st = TextStyle::new(ui.ctx.theme.body);
+        let l = ui.layout_text(self.title, &st);
+        let c = ui.surface.text();
+        let mut x = r.min.x;
+        let mut p = ui.painter();
+        if let Some((i, bg)) = self.icon {
+            let b = Rect::from_center_size(vec2(x + 14.0, r.center().y), Vec2::splat(28.0));
+            p.gradient(b, 8.0, bg.lerp(Color::WHITE, 0.14), bg, vec2(0.0, 1.0));
+            p.icon(b.center(), 17.0, i, Color::WHITE);
+            x += 40.0;
+        }
+        p.text(vec2(x, r.center().y - l.size.y * 0.5), &l, c);
+        let left = x + l.size.x + 16.0;
+        let id = ui.next_id();
+        if let Some(n) = ui.access(id.with("title"), Role::Label, r) {
+            n.label(self.title);
+        }
+        // Right aligned by remembering last frame's width.
+        #[derive(Clone, Copy, Default)]
+        struct W(f32);
+        let prev: Option<W> = ui.ctx.try_get(id);
+        if prev.is_none() {
+            ui.ctx.request_relayout();
+        }
+        let tw = prev.map_or(0.0, |w| w.0);
+        let tr = Rect { min: vec2((r.max.x - tw).max(left), r.min.y), max: r.max };
+        let from = ui.ctx.access_nodes().len();
+        let (_, used) = ui.row_sized(id, tr, trailing);
+        ui.ctx.access_label_since(from, self.title);
+        ui.ctx.set(id, W(used.x));
+    }
 }

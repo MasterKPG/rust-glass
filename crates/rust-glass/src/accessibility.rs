@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use crate::context::{Id, Order};
-use crate::geom::Rect;
+use crate::geometry::Rect;
 
 /// What kind of element a node is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -315,7 +315,7 @@ pub(crate) fn tree(
 
 /// Translate a request from AccessKit. Returns `None` for actions no widget
 /// handles.
-pub fn from_accesskit(req: &accesskit::ActionRequest) -> Option<(Id, Action)> {
+pub(crate) fn from_accesskit(req: &accesskit::ActionRequest) -> Option<(Id, Action)> {
     use accesskit::{Action as A, ActionData as D};
     let id = Id(req.target_node.0);
     let action = match (req.action, &req.data) {

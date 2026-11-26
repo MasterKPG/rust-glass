@@ -24,6 +24,8 @@ const MAX_PASSES: u64 = 64;
 
 /// Device and queue, shared by all windows.
 pub struct Gpu {
+    // Kept for as long as the device and its surfaces live.
+    #[allow(dead_code)]
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
@@ -853,7 +855,7 @@ impl Renderer {
                     w.pass.items.push(Item::Glass(index));
                     let half = (b.x1 - b.x0).min(b.y1 - b.y0) * 0.5;
                     let mut r = g.blur;
-                    if g.bleed > 0.0 {
+                    if g.light_spill > 0.0 {
                         r = r.max(14.0 * data.ppp);
                     }
                     if g.shadow > 0.0 && g.shadow_tint > 0.0 {

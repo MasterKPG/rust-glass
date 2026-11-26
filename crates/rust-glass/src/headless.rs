@@ -3,7 +3,7 @@
 
 use crate::app::{App, FrameInfo, run_ui};
 use crate::context::Context;
-use crate::geom::{Vec2, vec2};
+use crate::geometry::{Vec2, vec2};
 use crate::gpu::{Gpu, Renderer};
 use crate::input::Event;
 
@@ -64,6 +64,9 @@ impl Headless {
             self.renderer.add_image(u.w, u.h, &u.rgba);
         }
         self.renderer.upload_atlas(&mut self.ctx.text.uploads);
+        for id in self.ctx.removed_images.drain(..) {
+            self.renderer.remove_image(id);
+        }
         let view = self.target.create_view(&Default::default());
         let t1 = std::time::Instant::now();
         self.renderer.render(&self.ctx.paint.data, &view, self.size.0, self.size.1);

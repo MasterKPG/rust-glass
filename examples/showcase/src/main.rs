@@ -97,21 +97,21 @@ impl Showcase {
         Panel::new("sidebar", r).corner(26.0).padding(12.0).show(ctx, |ui| {
             ui.padded(vec2(8.0, 4.0), |ui| ui.subheading("rust-glass"));
             nav_list(ui, &mut self.page, PAGES);
-            let foot = Rect { min: vec2(ui.max.min.x, ui.max.max.y - 172.0), max: ui.max.max };
+            let foot = Rect { min: vec2(ui.max_rect.min.x, ui.max_rect.max.y - 172.0), max: ui.max_rect.max };
             ui.in_rect("foot", foot, |ui| {
                 ui.spacing = 7.0;
                 ui.separator();
                 ui.caption("Glass: clear to tinted");
-                let mut frost = ui.ctx.theme.frost;
+                let mut frost = ui.ctx.theme.glass_tint;
                 if ui.slider(&mut frost, 0.0..=1.0).changed() {
-                    ui.ctx.theme.frost = frost;
+                    ui.ctx.theme.glass_tint = frost;
                 }
                 ui.add(
                     Segmented::new(&mut self.appearance, &["Auto", "Light", "Dark"])
                         .width(ui.available_width()),
                 );
                 let names: Vec<&str> = art::WALLPAPERS.iter().map(|w| w.name).collect();
-                ComboBox { selected: &mut self.wall, options: &names, width: ui.available_width() }.show(ui);
+                ComboBox::new(&mut self.wall, &names).width(ui.available_width()).show(ui);
                 let g = info.gpu;
                 let fps = if info.interval_ms > 0.1 { 1000.0 / info.interval_ms } else { 0.0 };
                 let t = format!(
@@ -119,7 +119,7 @@ impl Showcase {
                     info.ui_ms, g.gpu_ms, g.passes
                 );
                 let c = ui.surface.secondary();
-                ui.text_with(&t, TextStyle::new(10.5), c);
+                ui.styled_text(&t, TextStyle::new(10.5), c);
             });
         });
     }
@@ -252,9 +252,9 @@ fn capture(dir: &str) -> Result<(), String> {
     // Light theme over dark content: small glass flips on its own.
     app.appearance = 1;
     shot(&mut hl, &mut app, "shot_adapt", 1, 2, &[])?;
-    hl.ctx.theme.frost = 1.0;
+    hl.ctx.theme.glass_tint = 1.0;
     shot(&mut hl, &mut app, "shot_frost", 0, 0, &[])?;
-    hl.ctx.theme.frost = Theme::FROST;
+    hl.ctx.theme.glass_tint = Theme::DEFAULT_GLASS_TINT;
     hl.ctx.theme.reduce_transparency = true;
     hl.ctx.theme.high_contrast = true;
     shot(&mut hl, &mut app, "shot_access", 0, 0, &[])?;

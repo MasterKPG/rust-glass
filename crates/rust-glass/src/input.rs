@@ -1,8 +1,8 @@
 //! Input state for one frame.
 
-use crate::access::Action;
+use crate::accessibility::Action;
 use crate::context::Id;
-use crate::geom::{Vec2, vec2};
+use crate::geometry::{Vec2, vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {

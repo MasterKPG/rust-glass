@@ -16,7 +16,7 @@ struct SliderScene {
 impl App for SliderScene {
     fn update(&mut self, ctx: &mut Context, _: &FrameInfo) {
         ctx.clear = Color::hex(0xD8D8D8);
-        let c = ctx.center();
+        let c = ctx.screen.center();
         let w = 953.0 / PPP;
         let r = Rect::from_center_size(c + vec2(-2.0, 2.0), vec2(w, 36.0));
         region(ctx, "s", r, |ui| {
@@ -24,8 +24,8 @@ impl App for SliderScene {
                 Slider::new(&mut self.v, 0.0..=1.0)
                     .width(w)
                     .tint(Color::hex(0x318DE2))
-                    .track(Color::hex(0xC4C4C4))
-                    .knob(Color::hex(0xD9D9D9)),
+                    .track_color(Color::hex(0xC4C4C4))
+                    .thumb_color(Color::hex(0xD9D9D9)),
             );
         });
     }
@@ -48,8 +48,8 @@ impl App for SegmentScene {
                     .fit()
                     .width(w)
                     .scale(k)
-                    .track(Color::hex(0xD0D0D0))
-                    .knob(Color::hex(0xDDDDDD)),
+                    .track_color(Color::hex(0xD0D0D0))
+                    .thumb_color(Color::hex(0xDDDDDD)),
             );
         });
     }
@@ -78,16 +78,16 @@ impl App for TabScene {
         p.fill(leaf, Corner::Capsule, Color::hex(0xF4F0EA));
         p.arc(vec2(w * 0.2, 76.0), 78.0, 3.0, 3.5, 2.6, Color::hex(0xFF9A6A), Color::hex(0x4FC3FF));
         p.fill(Rect { min: vec2(w * 0.5, 74.0), max: vec2(w * 0.96, 300.0) }, 0.0, Color::gray(0.42));
-        TabBar {
-            selected: &mut self.sel,
-            tabs: &[
+        TabBar::new(
+            &mut self.sel,
+            &[
                 (Icon::Home, "Today"),
                 (Icon::Plane, "Games"),
                 (Icon::Layers, "Apps"),
                 (Icon::Grid, "Arcade"),
                 (Icon::Search, "Search"),
             ],
-        }
+        )
         .show_at(ctx, Id::new("tabs"), vec2(w * 0.5, 106.0 / 2.135));
     }
 }
@@ -96,7 +96,7 @@ impl App for TabScene {
 fn tabs(dir: &str, name: &str, frost: f32) {
     let (w, hh, ppp) = (960, 230, 2.135);
     let mut h = Headless::new(w, hh, ppp).expect("gpu");
-    h.ctx.theme.frost = frost;
+    h.ctx.theme.glass_tint = frost;
     h.ctx.theme.adaptive = false;
     h.ctx.theme.accent = Color::hex(0x0068F0);
     let mut app = TabScene { sel: 4 };
@@ -189,7 +189,7 @@ fn main() {
     save(&h, w, hh, &format!("{dir}/seg_done.png"));
     println!("selected {}", app.sel);
 
-    for (name, frost) in [("clear", 0.0), ("default", Theme::FROST), ("tinted", 1.0)] {
+    for (name, frost) in [("clear", 0.0), ("default", Theme::DEFAULT_GLASS_TINT), ("tinted", 1.0)] {
         tabs(&dir, name, frost);
     }
 }

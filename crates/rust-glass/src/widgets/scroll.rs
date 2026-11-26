@@ -1,13 +1,13 @@
 use std::ops::Range;
 
-use crate::anim::{Spring, Tuning};
+use crate::animation::{Spring, Tuning};
 use crate::color::Color;
 use crate::context::{Id, Sense};
-use crate::geom::{Rect, Vec2, vec2};
+use crate::geometry::{Rect, Vec2, vec2};
 use crate::material::Corner;
 use crate::paint::Feather;
 use crate::ui::Ui;
-use crate::widgets::gel::rubber;
+use crate::widgets::press::rubber_band;
 
 /// Scrolling with smooth wheel steps, elastic ends and overlay scroll bars.
 /// Vertical by default; [`Self::horizontal`] lays the content out in a row
@@ -156,7 +156,7 @@ impl ScrollArea {
         let id = ui.make_id(self.id);
         let h = self.height.unwrap_or_else(|| ui.available_height());
         let w = self.width.unwrap_or_else(|| ui.available_width());
-        let view = ui.alloc(vec2(w, h));
+        let view = ui.allocate(vec2(w, h));
         let mut s: State = ui.ctx.get(id);
         let dt = ui.ctx.dt;
         let on = [self.x, self.y];
@@ -180,7 +180,7 @@ impl ScrollArea {
             // Past the ends the target is pulled back, so it gives and returns.
             let over = ax.target - ax.target.clamp(0.0, max[a]);
             if over != 0.0 {
-                ax.target = ax.target.clamp(0.0, max[a]) + rubber(over, limit);
+                ax.target = ax.target.clamp(0.0, max[a]) + rubber_band(over, limit);
                 let back = (-dt * 11.0).exp();
                 let o = ax.target - ax.target.clamp(0.0, max[a]);
                 ax.target = ax.target.clamp(0.0, max[a]) + if o.abs() < 0.4 { 0.0 } else { o * back };
@@ -190,9 +190,9 @@ impl ScrollArea {
                 s.last_move = ui.ctx.time;
                 ui.ctx.request_repaint();
             }
-            shown[a] = (ax.offset.x * ui.ctx.ppp).round() / ui.ctx.ppp;
+            shown[a] = (ax.offset.value * ui.ctx.pixels_per_point).round() / ui.ctx.pixels_per_point;
         }
-        let off = [s.axes[0].offset.x, s.axes[1].offset.x];
+        let off = [s.axes[0].offset.value, s.axes[1].offset.value];
 
         let (old_clip, old_mask) = (ui.clip, ui.mask);
         // Room for shadows and for glass that swells under a press, on the
@@ -273,7 +273,7 @@ impl ScrollArea {
             ui.ctx.request_repaint();
         }
         let c = Color::black(0.38).lerp(Color::white(0.45), ui.surface.dark());
-        let alpha = s.bar.x;
+        let alpha = s.bar.value;
         for (a, bar_id, hot, start, len) in bars {
             let wide = ui.ctx.animate_bool(bar_id.with("wide"), hot, Tuning::SNAP);
             let bw = 4.0 + 3.0 * wide;

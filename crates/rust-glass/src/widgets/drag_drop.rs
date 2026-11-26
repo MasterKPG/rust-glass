@@ -4,9 +4,9 @@
 use std::any::Any;
 use std::hash::Hash;
 
-use crate::anim::Tuning;
+use crate::animation::Tuning;
 use crate::context::{Cursor, Id, Order, Response, Sense};
-use crate::geom::{Rect, Vec2, vec2};
+use crate::geometry::{Rect, Vec2, vec2};
 use crate::material::Corner;
 use crate::ui::Ui;
 

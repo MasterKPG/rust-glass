@@ -23,7 +23,7 @@ struct Glass {
     outer_amount: f32,
     outer_height: f32,
 
-    chroma: f32,
+    dispersion: f32,
     blur: f32,          // radius in pixels
     magnify: f32,
     opacity: f32,
@@ -36,11 +36,11 @@ struct Glass {
     rim: f32,
     rim_width: f32,
     dark_edge: f32,
-    bleed: f32,
+    light_spill: f32,
 
     inner_glow: f32,
     inner_shadow: f32,
-    lit: f32,           // even brightening, press feedback
+    brightness: f32,           // even brightening, press feedback
     rim_base: f32,      // part of the rim that does not depend on the light
 
     pinch: f32,         // outward bend in the middle of the curved part
@@ -242,8 +242,8 @@ fn fs(in: VOut) -> @location(0) vec4f {
 
         // Lens. Dispersion flips on the far side, where light leaves the body.
         let even = mix(1.0, -0.55, smoothstep(0.0, 0.5, far));
-        let chroma = g.chroma * even * (1.0 - g.tint.y);
-        let corner = g.chroma * 2.0 * n.x * n.y * g.tint.y;
+        let dispersion = g.dispersion * even * (1.0 - g.tint.y);
+        let corner = g.dispersion * 2.0 * n.x * n.y * g.tint.y;
         let base = g.origin + (p - g.origin) / max(g.magnify, 0.05);
         let side = n.x * n.x * n.x * n.x;
         let shift = lens(g, depth, side, 0.0);
@@ -254,7 +254,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
         var blur = g.blur * mix(0.45, 1.0, smoothstep(0.0, max(g.inner_height, 1.0), depth));
 
         var c: vec3f;
-        let spread = abs(shift * chroma) + abs(corner) * 4.0 * step(depth, max(g.pinch_width, g.inner_height));
+        let spread = abs(shift * dispersion) + abs(corner) * 4.0 * step(depth, max(g.pinch_width, g.inner_height));
         if (blur < 3.0 && (spread > 0.35 || foot > 1.3)) {
             var sum = vec3f(0.0);
             var wsum = vec3f(0.0);
@@ -267,7 +267,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
                 let sub = (f32((i * 5 + 2) % steps) + 0.5) / f32(steps) - 0.5;
                 let w = max(vec3f(1.0) - abs(vec3f(t) - vec3f(0.0, 0.5, 1.0)) * 1.9, vec3f(0.0));
                 let hue = 1.0 - 2.0 * t;
-                let k = lens(g, max(depth + sub, 0.0), side, corner * hue) * (1.0 + chroma * hue) - sub;
+                let k = lens(g, max(depth + sub, 0.0), side, corner * hue) * (1.0 + dispersion * hue) - sub;
                 sum += sample_bg(base + n * k, rr) * w;
                 wsum += w;
             }
@@ -275,17 +275,17 @@ fn fs(in: VOut) -> @location(0) vec4f {
         } else {
             blur = max(blur, min((foot - 1.0) * 0.4, 6.0));
             if (spread > 0.35) {
-                c.r = sample_bg(base + n * shift * (1.0 + chroma), blur).r;
+                c.r = sample_bg(base + n * shift * (1.0 + dispersion), blur).r;
                 c.g = sample_bg(base + n * shift, blur).g;
-                c.b = sample_bg(base + n * shift * (1.0 - chroma), blur).b;
+                c.b = sample_bg(base + n * shift * (1.0 - dispersion), blur).b;
             } else {
                 c = sample_bg(base + n * shift, blur);
             }
         }
 
         // Light from the wider surroundings spills onto the edge.
-        if (g.bleed > 0.0) {
-            let e = g.bleed * exp(-depth / max(g.inner_height * 0.8, 1.0));
+        if (g.light_spill > 0.0) {
+            let e = g.light_spill * exp(-depth / max(g.inner_height * 0.8, 1.0));
             if (e > 0.008) {
                 let q = p + n * (g.inner_height * 0.8 + 6.0 * G.ppp);
                 c = mix(c, vibrance(sample_wide(q, 14.0 * G.ppp), 1.5), e);
@@ -334,7 +334,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
         let rim_a = clamp(g.rim * (key * line + dir * halo), 0.0, 1.0) * op;
         c = mix(c, rim_rgb, rim_a);
 
-        c = mix(c, vec3f(1.0), g.lit * op);
+        c = mix(c, vec3f(1.0), g.brightness * op);
 
         let fade = smoothstep(0.0, 0.25, op);
         let a = cov * fade;

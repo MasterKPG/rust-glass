@@ -55,7 +55,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             shown: usize::MAX,
-            enter: Spring::at(1.0),
+            enter: Spring::new(1.0),
             playing: true,
             position: 0.34,
             tab: 0,
@@ -125,18 +125,18 @@ fn scrolled(app: &mut Showcase, ctx: &mut Context, main: Rect, page: usize) {
     // A new page forms out of nothing: glass fades in by its optics.
     if app.s.shown != page {
         app.s.shown = page;
-        app.s.enter = Spring::at(0.0);
+        app.s.enter = Spring::new(0.0);
     }
-    let tune = ctx.tune(Tuning::new(0.42, 1.0));
+    let tune = ctx.tuning(Tuning::new(0.42, 1.0));
     if app.s.enter.step(1.0, tune, ctx.dt) {
         ctx.request_repaint();
     }
-    let enter = app.s.enter.x;
+    let enter = app.s.enter.value;
     let r = r.translate(vec2(0.0, 12.0 * (1.0 - enter)));
     region(ctx, ("page", page), r, |ui| {
         ui.opacity = enter;
         ScrollArea::new().fade(36.0, 36.0).insets(34.0, 40.0).show(ui, |ui| {
-            ui.max.max.x -= 18.0;
+            ui.max_rect.max.x -= 18.0;
             ui.spacing = 14.0;
             ui.heading(crate::PAGES[page].1);
             let s = &mut app.s;
@@ -158,7 +158,7 @@ fn scrolled(app: &mut Showcase, ctx: &mut Context, main: Rect, page: usize) {
 fn title(ui: &mut Ui, t: &str) {
     ui.space(8.0);
     let c = ui.surface.text().fade(0.78);
-    ui.text_with(t, TextStyle::new(13.0).weight(Weight::Semibold), c);
+    ui.styled_text(t, TextStyle::new(13.0).weight(Weight::Semibold), c);
 }
 
 fn buttons(s: &mut State, ui: &mut Ui) {
@@ -200,7 +200,7 @@ fn buttons(s: &mut State, ui: &mut Ui) {
     title(ui, "Icon buttons");
     ui.horizontal(|ui| {
         for i in [Icon::Plus, Icon::Search, Icon::Share, Icon::Trash] {
-            ui.add(Button::icon_only(i)).tip(ui, i.name());
+            ui.add(Button::icon_only(i)).on_hover_text(ui, i.name());
         }
         ui.add(Button::icon_only(Icon::Play).large().clear());
         ui.add(Button::icon_only(Icon::Phone).large().tinted(Color::GREEN));
@@ -225,15 +225,15 @@ fn buttons(s: &mut State, ui: &mut Ui) {
         .show(ui);
     });
     title(ui, "Fused drops: press the plus");
-    if let Some(i) = (SplitButton {
-        icon: Icon::Plus,
-        items: &[
+    if let Some(i) = SplitButton::new(
+        Icon::Plus,
+        &[
             (Icon::Camera, Color::ORANGE),
             (Icon::Photo, Color::GREEN),
             (Icon::Music, Color::PINK),
             (Icon::Mail, Color::BLUE),
         ],
-    })
+    )
     .show(ui)
     {
         let name = ["Camera", "Photo", "Music", "Mail"][i];
@@ -269,7 +269,7 @@ fn sliders(s: &mut State, ui: &mut Ui) {
     });
     title(ui, "Stepper and drag value");
     ui.horizontal(|ui| {
-        ui.add(Stepper { value: &mut s.count, range: 0..=10 });
+        ui.add(Stepper::new(&mut s.count, 0..=10));
         let t = s.count.to_string();
         ui.label(&t);
         ui.space(20.0);
@@ -298,16 +298,16 @@ fn segments(s: &mut State, ui: &mut Ui) {
     let id = Id::new("demo tabs");
     let clip = ui.clip;
     if clip.contains(c) {
-        TabBar {
-            selected: &mut s.tabbar,
-            tabs: &[
+        TabBar::new(
+            &mut s.tabbar,
+            &[
                 (Icon::Home, "Home"),
                 (Icon::Grid, "New"),
                 (Icon::Wifi, "Radio"),
                 (Icon::Music, "Library"),
                 (Icon::Search, "Search"),
             ],
-        }
+        )
         .show_at(ui.ctx, id, c);
     }
     title(ui, "On glass");
@@ -371,8 +371,7 @@ fn menus(s: &mut State, ui: &mut Ui) {
         }
     });
     title(ui, "Combo box");
-    ComboBox { selected: &mut s.combo, options: &["Small", "Medium", "Large", "Extra Large"], width: 190.0 }
-        .show(ui);
+    ComboBox::new(&mut s.combo, &["Small", "Medium", "Large", "Extra Large"]).width(190.0).show(ui);
     title(ui, "Color picker");
     ui.horizontal(|ui| {
         ui.color_picker(&mut s.color);
@@ -381,7 +380,7 @@ fn menus(s: &mut State, ui: &mut Ui) {
         ui.add(Button::new("Tinted with it").tinted(s.color));
     });
     title(ui, "Context menu: right click the card");
-    let r = ui.alloc(vec2(ui.available_width().min(420.0), 130.0));
+    let r = ui.allocate(vec2(ui.available_width().min(420.0), 130.0));
     let id = ui.make_id("ctx card");
     let res = ui.interact(id, r, Sense::Click);
     let (a, b) = (s.color, Color::from_hsv(s.color.to_hsv().0 + 0.12, 0.7, 0.9));
@@ -409,9 +408,9 @@ fn feedback(s: &mut State, ui: &mut Ui) {
     ui.progress(s.progress);
     ui.horizontal(|ui| {
         let pct = format!("{:.0}", s.progress * 100.0);
-        ui.add(Gauge { value: s.progress, size: 84.0, label: &pct, tint: Color::GREEN });
-        ui.add(Gauge { value: s.volume, size: 84.0, label: "Vol", tint: Color::PINK });
-        ui.add(Gauge { value: s.bright, size: 84.0, label: "Sun", tint: Color::ORANGE });
+        ui.add(Gauge::new(s.progress, &pct).size(84.0).tint(Color::GREEN));
+        ui.add(Gauge::new(s.volume, "Vol").size(84.0).tint(Color::PINK));
+        ui.add(Gauge::new(s.bright, "Sun").size(84.0).tint(Color::ORANGE));
         ui.spinner();
         if ui.button("Randomize").clicked() {
             s.progress = (s.progress + 0.37).fract();
@@ -483,7 +482,7 @@ fn lists(s: &mut State, ui: &mut Ui) {
     ScrollArea::horizontal().id("tiles").height(150.0).fade_sides(28.0, 28.0).show(ui, |ui| {
         for i in 0..24 {
             let (name, a, b) = TILES[i % TILES.len()];
-            let r = ui.alloc(vec2(170.0, 124.0));
+            let r = ui.allocate(vec2(170.0, 124.0));
             let mut p = ui.painter();
             p.shadow(r.translate(vec2(0.0, 4.0)), 22.0, 14.0, Color::black(0.18));
             p.gradient(r, 22.0, a, b, vec2(0.6, 1.0));
@@ -502,7 +501,7 @@ fn lists(s: &mut State, ui: &mut Ui) {
                 ui.horizontal(|ui| {
                     ui.spacing = 0.0;
                     for col in 0..15 {
-                        let r = ui.alloc(vec2(86.0, 30.0));
+                        let r = ui.allocate(vec2(86.0, 30.0));
                         let c = if (row + col) % 2 == 0 { ui.surface.fill() } else { Color::TRANSPARENT };
                         ui.painter().fill(r.shrink(1.0), 6.0, c);
                         let name = format!("{}{}", (b'A' + col as u8) as char, row + 1);
@@ -521,7 +520,7 @@ fn lists(s: &mut State, ui: &mut Ui) {
         ScrollArea::new().id("long").height(240.0).show_rows(ui, 32.0, 100_000, |ui, rows| {
             for i in rows {
                 let w = ui.available_width() - 12.0;
-                let r = ui.alloc(vec2(w, 32.0));
+                let r = ui.allocate(vec2(w, 32.0));
                 if i % 2 == 0 {
                     let c = ui.surface.fill();
                     ui.painter().fill(r, 9.0, c);
@@ -578,7 +577,7 @@ fn task_row(ui: &mut Ui, t: &str) {
 }
 
 fn task_row_width(ui: &mut Ui, t: &str, w: f32) {
-    let r = ui.alloc(vec2(w, 40.0));
+    let r = ui.allocate(vec2(w, 40.0));
     let (fill, tc, sc) = (ui.surface.fill(), ui.surface.text(), ui.surface.tertiary());
     let l = ui.layout_text(t, &TextStyle::new(15.0));
     let mut p = ui.painter();
@@ -588,7 +587,7 @@ fn task_row_width(ui: &mut Ui, t: &str, w: f32) {
         p.line(vec2(r.max.x - 30.0, y), vec2(r.max.x - 16.0, y), 1.6, sc);
     }
     p.text(vec2(r.min.x + 14.0, r.center().y - l.size.y * 0.5), &l, tc);
-    if let Some(n) = ui.access(ui.make_id(("task", t)), rust_glass::access::Role::Label, r) {
+    if let Some(n) = ui.access(ui.make_id(("task", t)), rust_glass::accessibility::Role::Label, r) {
         n.label(t);
     }
 }
@@ -596,43 +595,43 @@ fn task_row_width(ui: &mut Ui, t: &str, w: f32) {
 fn settings(s: &mut State, ui: &mut Ui) {
     ui.card(|ui| {
         ui.spacing = 4.0;
-        Row { icon: Some((Icon::Plane, Color::ORANGE)), title: "Airplane Mode" }.show(ui, |ui| {
+        SettingsRow::new("Airplane Mode").icon(Icon::Plane, Color::ORANGE).show(ui, |ui| {
             ui.add(Toggle::new(&mut s.plane));
         });
         ui.separator();
-        Row { icon: Some((Icon::Wifi, Color::BLUE)), title: "Wi-Fi" }.show(ui, |ui| {
+        SettingsRow::new("Wi-Fi").icon(Icon::Wifi, Color::BLUE).show(ui, |ui| {
             ui.add(Toggle::new(&mut s.wifi));
         });
         ui.separator();
-        Row { icon: Some((Icon::Bluetooth, Color::BLUE)), title: "Bluetooth" }.show(ui, |ui| {
+        SettingsRow::new("Bluetooth").icon(Icon::Bluetooth, Color::BLUE).show(ui, |ui| {
             ui.add(Toggle::new(&mut s.bt));
         });
         ui.separator();
-        Row { icon: Some((Icon::Volume, Color::PINK)), title: "Sounds" }.show(ui, |ui| {
+        SettingsRow::new("Sounds").icon(Icon::Volume, Color::PINK).show(ui, |ui| {
             ui.add(Slider::new(&mut s.volume, 0.0..=1.0).width(180.0).tint(Color::PINK));
         });
         ui.separator();
-        Row { icon: Some((Icon::Sun, Color::INDIGO)), title: "Text Size" }.show(ui, |ui| {
-            ui.add(Stepper { value: &mut s.count, range: 0..=10 });
+        SettingsRow::new("Text Size").icon(Icon::Sun, Color::INDIGO).show(ui, |ui| {
+            ui.add(Stepper::new(&mut s.count, 0..=10));
         });
     });
     title(ui, "Accessibility");
     let mut t = ui.ctx.theme.clone();
     ui.card(|ui| {
         ui.spacing = 4.0;
-        Row { icon: Some((Icon::Eye, Color::BLUE)), title: "Reduce Transparency" }.show(ui, |ui| {
+        SettingsRow::new("Reduce Transparency").icon(Icon::Eye, Color::BLUE).show(ui, |ui| {
             ui.add(Toggle::new(&mut t.reduce_transparency));
         });
         ui.separator();
-        Row { icon: Some((Icon::Flash, Color::GREEN)), title: "Reduce Motion" }.show(ui, |ui| {
+        SettingsRow::new("Reduce Motion").icon(Icon::Flash, Color::GREEN).show(ui, |ui| {
             ui.add(Toggle::new(&mut t.reduce_motion));
         });
         ui.separator();
-        Row { icon: Some((Icon::Moon, Color::gray(0.35))), title: "Increase Contrast" }.show(ui, |ui| {
+        SettingsRow::new("Increase Contrast").icon(Icon::Moon, Color::gray(0.35)).show(ui, |ui| {
             ui.add(Toggle::new(&mut t.high_contrast));
         });
         ui.separator();
-        Row { icon: Some((Icon::Drop, Color::TEAL)), title: "Adapt to Background" }.show(ui, |ui| {
+        SettingsRow::new("Adapt to Background").icon(Icon::Drop, Color::TEAL).show(ui, |ui| {
             ui.add(Toggle::new(&mut t.adaptive));
         });
     });
@@ -730,8 +729,8 @@ fn player(app: &mut Showcase, ctx: &mut Context, main: Rect) {
                 .into_iter()
                 .enumerate()
             {
-                let r = ui.alloc_interact(vec2(42.0, 42.0), Sense::Click);
-                let g = rust_glass::widgets::gel::Gel::update(ui.ctx, &r, 1.0);
+                let r = ui.allocate_response(vec2(42.0, 42.0), Sense::Click);
+                let g = rust_glass::widgets::press::PressEffect::update(ui.ctx, &r, 1.0);
                 let f = ui.surface.fill();
                 let mut p = ui.painter();
                 p.fill(g.rect, Corner::Capsule, f.fade(g.hover));
@@ -742,16 +741,16 @@ fn player(app: &mut Showcase, ctx: &mut Context, main: Rect) {
             }
         });
     });
-    TabBar {
-        selected: &mut s.tab,
-        tabs: &[
+    TabBar::new(
+        &mut s.tab,
+        &[
             (Icon::Home, "Home"),
             (Icon::Grid, "New"),
             (Icon::Wifi, "Radio"),
             (Icon::Music, "Library"),
             (Icon::Search, "Search"),
         ],
-    }
+    )
     .show_at(ctx, Id::new("player tabs"), vec2(cx, bottom - 31.0));
 }
 
@@ -767,11 +766,11 @@ fn lab(app: &mut Showcase, ctx: &mut Context, main: Rect) {
         s.lab_pos = s.lab_pos.max(main.min).min(main.max);
         ctx.request_repaint();
     }
-    let v = ctx.animate2(Id::new("lens pos"), s.lab_pos, Tuning::new(0.22, 0.55));
-    let vel = v.vel();
+    let v = ctx.animate_vec2(Id::new("lens pos"), s.lab_pos, Tuning::new(0.22, 0.55));
+    let vel = v.velocity();
     let (sx, sy) = ((vel.x.abs() / 5000.0).min(0.2), (vel.y.abs() / 5000.0).min(0.2));
     let body =
-        Rect::from_center_size(v.pos(), vec2(sz.x * (1.0 + sx - sy * 0.6), sz.y * (1.0 + sy - sx * 0.6)));
+        Rect::from_center_size(v.value(), vec2(sz.x * (1.0 + sx - sy * 0.6), sz.y * (1.0 + sy - sx * 0.6)));
     let mut g = Glass::new(body, Corner::Radius(s.lab_size * 0.36), s.lab);
     g.light_bend = (vel.x / 2500.0).clamp(-0.5, 0.5);
     let a = ctx.prepare_glass(Id::new("lens"), &mut g, true);
@@ -802,7 +801,7 @@ fn lab(app: &mut Showcase, ctx: &mut Context, main: Rect) {
             ("Refraction", &mut m.refraction, 0.0, 80.0),
             ("Depth", &mut m.depth, 1.0, 60.0),
             ("Outer ring", &mut m.outer_refraction, 0.0, 20.0),
-            ("Dispersion", &mut m.chroma, 0.0, 0.5),
+            ("Dispersion", &mut m.dispersion, 0.0, 0.5),
             ("Blur", &mut m.blur, 0.0, 24.0),
             ("Magnify", &mut m.magnify, 0.6, 2.0),
             ("Saturation", &mut m.saturation, 0.0, 2.5),
@@ -810,7 +809,7 @@ fn lab(app: &mut Showcase, ctx: &mut Context, main: Rect) {
             ("Rim", &mut m.rim, 0.0, 1.0),
             ("Rim width", &mut m.rim_width, 0.3, 4.0),
             ("Dark edge", &mut m.dark_edge, 0.0, 1.0),
-            ("Light spill", &mut m.bleed, 0.0, 1.0),
+            ("Light spill", &mut m.light_spill, 0.0, 1.0),
             ("Inner glow", &mut m.inner_glow, 0.0, 1.0),
             ("Inner shade", &mut m.inner_shadow, 0.0, 0.5),
             ("Shadow", &mut m.shadow, 0.0, 0.6),
@@ -822,7 +821,7 @@ fn lab(app: &mut Showcase, ctx: &mut Context, main: Rect) {
             ui.spacing = 4.0;
             for (n, v, lo, hi) in items.iter_mut().skip(col * 6).take(6) {
                 ui.horizontal(|ui| {
-                    let w = ui.max.width();
+                    let w = ui.max_rect.width();
                     ui.vertical(82.0, |ui| ui.caption(n));
                     ui.add(Slider::new(v, *lo..=*hi).width((w - 92.0).max(60.0)));
                 });
@@ -848,16 +847,28 @@ fn reference(app: &mut Showcase, ctx: &mut Context, main: Rect) {
                 Slider::new(&mut s.ref_v, 0.0..=1.0)
                     .scale(2.2)
                     .width(w)
-                    .knob(knob)
+                    .thumb_color(knob)
                     .tint(Color::hex(0x318DE2)),
             );
-            ui.add(Segmented::new(&mut s.ref_seg, &["For You", "Library"]).fit().scale(2.1).knob(knob));
+            ui.add(
+                Segmented::new(&mut s.ref_seg, &["For You", "Library"]).fit().scale(2.1).thumb_color(knob),
+            );
             ui.horizontal(|ui| {
                 ui.add(Toggle::new(&mut s.ref_toggle).scale(2.2));
                 ui.space(20.0);
-                ui.add(Segmented::new(&mut s.seg3, &["Day", "Week", "Month", "Year"]).scale(1.4).knob(knob));
+                ui.add(
+                    Segmented::new(&mut s.seg3, &["Day", "Week", "Month", "Year"])
+                        .scale(1.4)
+                        .thumb_color(knob),
+                );
             });
-            ui.add(Slider::new(&mut s.bright, 0.0..=1.0).scale(1.3).width(w).knob(knob).tint(Color::ORANGE));
+            ui.add(
+                Slider::new(&mut s.bright, 0.0..=1.0)
+                    .scale(1.3)
+                    .width(w)
+                    .thumb_color(knob)
+                    .tint(Color::ORANGE),
+            );
         });
     });
 }

@@ -1,15 +1,16 @@
 use std::ops::RangeInclusive;
 
-use crate::access::{Action, Role};
-use crate::anim::Tuning;
+use crate::accessibility::{Action, Role};
+use crate::animation::Tuning;
 use crate::color::Color;
 use crate::context::{Cursor, Response, Sense};
-use crate::geom::{Rect, smoothstep, vec2};
+use crate::geometry::{Rect, smoothstep, vec2};
 use crate::input::Key;
 use crate::material::Corner;
 use crate::text::{TextStyle, Weight};
 use crate::ui::{Ui, Widget};
-use crate::widgets::gel::{droplet_glass, droplet_rect, droplet_state, rubber, set_droplet};
+use crate::widgets::press::rubber_band;
+use crate::widgets::thumb::{load_thumb, store_thumb, thumb_glass, thumb_rect};
 
 /// Slider with a droplet thumb. While held the thumb is a clear lens, so the
 /// end of the filled track stays visible under the finger.
@@ -46,11 +47,11 @@ impl<'a> Slider<'a> {
         self.tint = Some(c);
         self
     }
-    pub fn knob(mut self, c: Color) -> Self {
+    pub fn thumb_color(mut self, c: Color) -> Self {
         self.knob = Some(c);
         self
     }
-    pub fn track(mut self, c: Color) -> Self {
+    pub fn track_color(mut self, c: Color) -> Self {
         self.track = Some(c);
         self
     }
@@ -64,11 +65,11 @@ impl Widget for Slider<'_> {
         let track_h = 7.2 * k;
         let w = self.width.unwrap_or_else(|| ui.available_width().clamp(80.0, 420.0));
         let h = (rest.y + 8.0 * k).max(ui.ctx.theme.control_height.min(32.0));
-        let mut r = ui.alloc_interact(vec2(w, h), Sense::Drag);
+        let mut r = ui.allocate_response(vec2(w, h), Sense::Drag);
         ui.ctx.focusable(r.id);
         let (lo, hi) = (*self.range.start(), *self.range.end());
         let span = (hi - lo).max(1e-6);
-        let mut d = droplet_state(ui.ctx, r.id);
+        let mut d = load_thumb(ui.ctx, r.id);
         // The thumb travels inside the track. All x values are relative to it.
         let ox = r.rect.min.x;
         let x0 = rest.x * 0.5;
@@ -85,11 +86,11 @@ impl Widget for Slider<'_> {
             && r.held
         {
             if r.pressed {
-                let at = d.pos.x + ox;
+                let at = d.pos.value + ox;
                 grab = Grab(if (p.x - at).abs() < lifted.x * 0.6 { p.x - at } else { 0.0 });
             }
             let x = p.x - ox - grab.0;
-            over = rubber(x - x.clamp(x0, x1), 10.0 * k);
+            over = rubber_band(x - x.clamp(x0, x1), 10.0 * k);
             let mut v = lo + span * ((x - x0) / (x1 - x0).max(1.0)).clamp(0.0, 1.0);
             if let Some(s) = self.step {
                 v = (lo + ((v - lo) / s).round() * s).clamp(lo, hi);
@@ -119,28 +120,28 @@ impl Widget for Slider<'_> {
 
         let target = to_x(*self.value) + over;
         // Tight under the finger, loose while catching up after a press elsewhere.
-        let gap = (d.pos.x - target).abs() / lifted.x;
+        let gap = (d.pos.value - target).abs() / lifted.x;
         let follow = if r.held && self.step.is_none() {
             Tuning::new(0.085 + 0.16 * smoothstep(0.4, 1.6, gap), 0.92)
         } else {
             Tuning::new(0.30, 0.82)
         };
         let f = d.step(ui.ctx, target, follow, r.held, rest, lifted);
-        set_droplet(ui.ctx, r.id, d);
-        let px = ox + d.pos.x;
+        store_thumb(ui.ctx, r.id, d);
+        let px = ox + d.pos.value;
 
         let cy = r.rect.center().y;
         let accent = self.tint.unwrap_or(ui.ctx.theme.accent);
         let track_c = self.track.unwrap_or(ui.surface.fill_strong());
-        let knob = self.knob.unwrap_or(ui.surface.knob());
+        let knob = self.knob.unwrap_or(ui.surface.thumb_color());
         let track = Rect::from_center_size(r.rect.center(), vec2(w, track_h));
-        let thumb = droplet_rect(ui.ctx, vec2(px, cy), &f);
-        let glass = droplet_glass(ui.ctx, thumb, &f, knob, k);
+        let thumb = thumb_rect(ui.ctx, vec2(px, cy), &f);
+        let glass = thumb_glass(ui.ctx, thumb, &f, knob, k);
         let step = self.step;
         let mut p = ui.painter();
-        p.fill(track, Corner::Round(track_h), track_c);
+        p.fill(track, Corner::Circular(track_h), track_c);
         let fill = Rect { min: track.min, max: vec2(px.max(track.min.x + track_h), track.max.y) };
-        p.fill(fill, Corner::Round(track_h), accent);
+        p.fill(fill, Corner::Circular(track_h), accent);
         if let Some(s) = step {
             let n = (span / s).round() as i32;
             if (1..=12).contains(&n) {
@@ -149,7 +150,7 @@ impl Widget for Slider<'_> {
                     let c = Color::black(0.16);
                     p.fill(
                         Rect::from_center_size(vec2(x, cy), vec2(2.0, 2.0) * k),
-                        Corner::Round(1.0 * k),
+                        Corner::Circular(1.0 * k),
                         c,
                     );
                 }
@@ -197,7 +198,7 @@ impl Widget for DragValue<'_> {
         let text = format!("{:.*}{}", self.decimals, *self.value, self.suffix);
         let st = TextStyle::new(ui.ctx.theme.body).weight(Weight::Medium);
         let l = ui.layout_text(&text, &st);
-        let mut r = ui.alloc_interact(vec2((l.size.x + 26.0).max(64.0), 30.0), Sense::Drag);
+        let mut r = ui.allocate_response(vec2((l.size.x + 26.0).max(64.0), 30.0), Sense::Drag);
         ui.ctx.focusable(r.id);
         if r.hovered || r.held {
             ui.ctx.cursor = Cursor::ResizeH;
@@ -218,7 +219,7 @@ impl Widget for DragValue<'_> {
             n.numeric(*self.value as f64, lo as f64, hi as f64, Some(self.speed as f64)).value(text.clone());
         }
         r.changed = before != *self.value;
-        let gel = crate::widgets::gel::Gel::update(ui.ctx, &r, 0.6);
+        let gel = crate::widgets::press::PressEffect::update(ui.ctx, &r, 0.6);
         let (c, t) = (ui.surface.fill(), ui.surface.text());
         let mut p = ui.painter();
         p.fill(gel.rect, 9.0, c.fade(1.0 + gel.hover * 0.6));
@@ -228,16 +229,23 @@ impl Widget for DragValue<'_> {
     }
 }
 
-/// Minus and plus on one capsule.
+/// Minus and plus buttons on one capsule.
 pub struct Stepper<'a> {
-    pub value: &'a mut i32,
-    pub range: RangeInclusive<i32>,
+    value: &'a mut i32,
+    range: RangeInclusive<i32>,
+}
+
+impl<'a> Stepper<'a> {
+    /// Creates a stepper that changes `value` by one within `range`.
+    pub fn new(value: &'a mut i32, range: RangeInclusive<i32>) -> Self {
+        Self { value, range }
+    }
 }
 
 impl Widget for Stepper<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let size = vec2(92.0, 32.0);
-        let rect = ui.alloc(size);
+        let rect = ui.allocate(size);
         let id = ui.next_id();
         let mut res = ui.interact(id, rect, Sense::Hover);
         let mid = rect.center().x;
@@ -267,8 +275,8 @@ impl Widget for Stepper<'_> {
             n.label("Increase");
         }
         res.changed = before != *self.value;
-        let ga = crate::widgets::gel::Gel::update(ui.ctx, &a, 1.0);
-        let gb = crate::widgets::gel::Gel::update(ui.ctx, &b, 1.0);
+        let ga = crate::widgets::press::PressEffect::update(ui.ctx, &a, 1.0);
+        let gb = crate::widgets::press::PressEffect::update(ui.ctx, &b, 1.0);
         let mut bar = rect;
         for g in [&ga, &gb] {
             if g.press.abs() > 0.001 {
@@ -284,7 +292,7 @@ impl Widget for Stepper<'_> {
             let m = ui.ctx.theme.regular;
             let mut g = crate::material::Glass::new(bar, Corner::Capsule, m);
             color = ui.ctx.prepare_glass(id, &mut g, true).surface().text();
-            g.lit = 0.04 * ga.press.max(gb.press).max(0.0);
+            g.brightness = 0.04 * ga.press.max(gb.press).max(0.0);
             ui.painter().glass(&g);
         }
         let sep = color.alpha(0.16);
@@ -292,13 +300,13 @@ impl Widget for Stepper<'_> {
         p.icon(
             ga.rect.center(),
             16.0 * ga.scale,
-            crate::icons::Icon::Minus,
+            crate::icon::Icon::Minus,
             color.fade(if can.0 { 1.0 } else { 0.3 }),
         );
         p.icon(
             gb.rect.center(),
             16.0 * gb.scale,
-            crate::icons::Icon::Plus,
+            crate::icon::Icon::Plus,
             color.fade(if can.1 { 1.0 } else { 0.3 }),
         );
         p.line(vec2(mid, rect.min.y + 8.0), vec2(mid, rect.max.y - 8.0), 1.0, sep);

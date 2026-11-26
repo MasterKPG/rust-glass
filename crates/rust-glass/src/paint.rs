@@ -6,14 +6,14 @@ use std::rc::Rc;
 use bytemuck::{Pod, Zeroable};
 
 use crate::color::Color;
-use crate::geom::{Rect, Vec2, lerp, vec2};
-use crate::icons::Icon;
+use crate::geometry::{Rect, Vec2, lerp, vec2};
+use crate::icon::Icon;
 use crate::material::{Corner, Glass, Material};
 use crate::text::{TextEngine, TextLayout};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
-pub struct ShapeInst {
+pub(crate) struct ShapeInst {
     pub rect: [f32; 4],
     pub uv: [f32; 4],
     pub color: [f32; 4],
@@ -30,7 +30,7 @@ pub struct ShapeInst {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
-pub struct MaskInst {
+pub(crate) struct MaskInst {
     pub rect: [f32; 4],
     pub radius: [f32; 2],
     pub power: f32,
@@ -40,7 +40,7 @@ pub struct MaskInst {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
-pub struct GShapeInst {
+pub(crate) struct GShapeInst {
     pub center: [f32; 2],
     pub half: [f32; 2],
     pub radius: [f32; 2],
@@ -51,7 +51,7 @@ pub struct GShapeInst {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
-pub struct GlassInst {
+pub(crate) struct GlassInst {
     pub bounds: [f32; 4],
     pub clip: [f32; 4],
     pub tint: [f32; 4],
@@ -63,7 +63,7 @@ pub struct GlassInst {
     pub inner_height: f32,
     pub outer_amount: f32,
     pub outer_height: f32,
-    pub chroma: f32,
+    pub dispersion: f32,
     pub blur: f32,
     pub magnify: f32,
     pub opacity: f32,
@@ -74,10 +74,10 @@ pub struct GlassInst {
     pub rim: f32,
     pub rim_width: f32,
     pub dark_edge: f32,
-    pub bleed: f32,
+    pub light_spill: f32,
     pub inner_glow: f32,
     pub inner_shadow: f32,
-    pub lit: f32,
+    pub brightness: f32,
     pub rim_base: f32,
     pub pinch: f32,
     pub pinch_width: f32,
@@ -100,13 +100,13 @@ const LINE: u32 = 5;
 pub struct ImageId(pub u32);
 
 #[derive(Clone, Copy, Debug)]
-pub enum Cmd {
+pub(crate) enum Cmd {
     Shapes { start: u32, end: u32, image: ImageId },
     Glass { index: u32, probe: u32 },
 }
 
 #[derive(Default)]
-pub struct LayerList {
+pub(crate) struct LayerList {
     pub shapes: Vec<ShapeInst>,
     pub glasses: Vec<(GlassInst, Option<u64>)>,
     /// (is_glass, index, image)
@@ -115,7 +115,7 @@ pub struct LayerList {
 
 /// Flattened frame, consumed by the renderer.
 #[derive(Default)]
-pub struct DrawData {
+pub(crate) struct DrawData {
     pub shapes: Vec<ShapeInst>,
     pub glasses: Vec<GlassInst>,
     pub gshapes: Vec<GShapeInst>,
@@ -130,12 +130,12 @@ pub struct DrawData {
 }
 
 #[derive(Default)]
-pub struct Paint {
+pub(crate) struct Paint {
     pub ppp: f32,
     pub layers: Vec<LayerList>,
     pub data: DrawData,
     /// Global material adjustments, from the theme.
-    pub frost: f32,
+    pub glass_tint: f32,
     pub reduce_transparency: bool,
     pub high_contrast: bool,
 }
@@ -222,8 +222,8 @@ const ANY_IMAGE: ImageId = ImageId(u32::MAX);
 
 /// Paints into one layer with a fixed clip rectangle.
 pub struct Painter<'a> {
-    pub paint: &'a mut Paint,
-    pub text: &'a mut TextEngine,
+    pub(crate) paint: &'a mut Paint,
+    pub(crate) text: &'a mut TextEngine,
     pub layer: usize,
     pub clip: Rect,
     pub mask: u32,
@@ -424,11 +424,11 @@ impl Painter<'_> {
         let s = self.paint.ppp;
         let m: &Material = &g.material;
         // The setting runs from clear over the preset to fully tinted.
-        let setting = self.paint.frost.clamp(0.0, 1.0);
-        let preset = crate::theme::Theme::FROST;
-        let frost = ((setting - preset) / (1.0 - preset)).max(0.0) * m.frosts;
-        let clear = ((preset - setting) / preset).max(0.0) * m.frosts;
-        let solid_ui = if self.paint.reduce_transparency { m.frosts } else { 0.0 };
+        let setting = self.paint.glass_tint.clamp(0.0, 1.0);
+        let preset = crate::theme::Theme::DEFAULT_GLASS_TINT;
+        let frost = ((setting - preset) / (1.0 - preset)).max(0.0) * m.glass_tint_response;
+        let clear = ((preset - setting) / preset).max(0.0) * m.glass_tint_response;
+        let solid_ui = if self.paint.reduce_transparency { m.glass_tint_response } else { 0.0 };
         let presence = g.presence * self.opacity;
         let start = self.paint.data.gshapes.len() as u32;
         let mut min_half = f32::MAX;
@@ -479,7 +479,7 @@ impl Painter<'_> {
         let inst = GlassInst {
             bounds: self.px(bounds.expand(grow + g.fuse * 0.3)),
             clip: self.px(self.clip),
-            tint: [m.sideways, m.corner_chroma, 0.0, m.tint_follow],
+            tint: [m.sideways, m.corner_dispersion, 0.0, m.tint_follow],
             shape_start: start,
             shape_count: g.shapes.len() as u32,
             mask: self.mask,
@@ -488,7 +488,7 @@ impl Painter<'_> {
             inner_height: depth * s,
             outer_amount: m.outer_refraction * k * presence * s,
             outer_height: m.outer_depth * k * s,
-            chroma: m.chroma,
+            dispersion: m.dispersion,
             blur: blur * s * presence.sqrt(),
             magnify: lerp(1.0, m.magnify, presence),
             opacity: presence,
@@ -499,10 +499,10 @@ impl Painter<'_> {
             rim: (m.rim * lerp(1.0, 0.72, d)).min(1.0),
             rim_width: m.rim_width * s.max(1.0),
             dark_edge: (m.dark_edge + hc).min(0.9),
-            bleed: m.bleed * presence,
+            light_spill: m.light_spill * presence,
             inner_glow: m.inner_glow * lerp(1.0, 0.6, d),
             inner_shadow: m.inner_shadow,
-            lit: g.lit,
+            brightness: g.brightness,
             rim_base: m.rim_base,
             pinch: m.pinch * k * presence * s,
             pinch_width: m.pinch_width * k * s,

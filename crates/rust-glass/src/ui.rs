@@ -3,10 +3,10 @@
 use std::hash::Hash;
 use std::rc::Rc;
 
-use crate::access::{Node, Role};
+use crate::accessibility::{Node, Role};
 use crate::color::Color;
 use crate::context::{Context, Id, Response, Sense};
-use crate::geom::{Rect, Vec2, vec2};
+use crate::geometry::{Rect, Vec2, vec2};
 use crate::material::{Corner, Glass, Material};
 use crate::paint::Painter;
 use crate::text::{TextLayout, TextStyle, Weight};
@@ -39,7 +39,7 @@ pub struct Ui<'a> {
     pub clip: Rect,
     pub mask: u32,
     pub opacity: f32,
-    pub max: Rect,
+    pub max_rect: Rect,
     pub cursor: Vec2,
     pub spacing: f32,
     pub align: Align,
@@ -65,7 +65,7 @@ impl<'a> Ui<'a> {
             clip: Rect::EVERYTHING,
             mask: 0,
             opacity: 1.0,
-            max,
+            max_rect: max,
             cursor: max.min,
             spacing,
             align: Align::Start,
@@ -85,7 +85,7 @@ impl<'a> Ui<'a> {
             clip: self.clip,
             mask: self.mask,
             opacity: self.opacity,
-            max,
+            max_rect: max,
             cursor: max.min,
             spacing: self.spacing,
             align: self.align,
@@ -110,13 +110,13 @@ impl<'a> Ui<'a> {
     }
 
     pub fn available_width(&self) -> f32 {
-        (self.max.max.x - self.cursor.x).max(0.0)
+        (self.max_rect.max.x - self.cursor.x).max(0.0)
     }
     pub fn available_height(&self) -> f32 {
-        (self.max.max.y - self.cursor.y).max(0.0)
+        (self.max_rect.max.y - self.cursor.y).max(0.0)
     }
     pub fn available(&self) -> Rect {
-        Rect { min: self.cursor, max: self.max.max.max(self.cursor) }
+        Rect { min: self.cursor, max: self.max_rect.max.max(self.cursor) }
     }
     /// Space used so far.
     pub fn used(&self) -> Rect {
@@ -126,17 +126,17 @@ impl<'a> Ui<'a> {
         matches!(self.dir, Dir::Horizontal { .. })
     }
 
-    pub fn alloc(&mut self, size: Vec2) -> Rect {
+    pub fn allocate(&mut self, size: Vec2) -> Rect {
         let gap = if self.first { 0.0 } else { self.spacing };
         self.first = false;
         let r = match self.dir {
             Dir::Vertical => {
                 self.cursor.y += gap;
-                let free = (self.max.width() - size.x).max(0.0);
+                let free = (self.max_rect.width() - size.x).max(0.0);
                 let x = match self.align {
-                    Align::Start => self.max.min.x,
-                    Align::Center => self.max.min.x + free * 0.5,
-                    Align::End => self.max.min.x + free,
+                    Align::Start => self.max_rect.min.x,
+                    Align::Center => self.max_rect.min.x + free * 0.5,
+                    Align::End => self.max_rect.min.x + free,
                 };
                 let r = Rect::from_min_size(vec2(x, self.cursor.y), size);
                 self.cursor.y += size.y;
@@ -144,7 +144,7 @@ impl<'a> Ui<'a> {
             }
             Dir::Horizontal { row } => {
                 self.cursor.x += gap;
-                let y = self.max.min.y + ((row - size.y) * 0.5).max(0.0);
+                let y = self.max_rect.min.y + ((row - size.y) * 0.5).max(0.0);
                 let r = Rect::from_min_size(vec2(self.cursor.x, y), size);
                 self.cursor.x += size.x;
                 r
@@ -152,7 +152,7 @@ impl<'a> Ui<'a> {
         };
         self.content = self.content.union(r);
         // Whole pixels keep edges and text crisp.
-        let p = self.ctx.ppp;
+        let p = self.ctx.pixels_per_point;
         let snap = |v: f32| (v * p).round() / p;
         Rect { min: vec2(snap(r.min.x), snap(r.min.y)), max: vec2(snap(r.max.x), snap(r.max.y)) }
     }
@@ -161,14 +161,14 @@ impl<'a> Ui<'a> {
     pub fn next_pos(&self) -> Vec2 {
         let gap = if self.first { 0.0 } else { self.spacing };
         match self.dir {
-            Dir::Vertical => vec2(self.max.min.x, self.cursor.y + gap),
-            Dir::Horizontal { .. } => vec2(self.cursor.x + gap, self.max.min.y),
+            Dir::Vertical => vec2(self.max_rect.min.x, self.cursor.y + gap),
+            Dir::Horizontal { .. } => vec2(self.cursor.x + gap, self.max_rect.min.y),
         }
     }
 
     /// Reserve space and sense input on it.
-    pub fn alloc_interact(&mut self, size: Vec2, sense: Sense) -> Response {
-        let r = self.alloc(size);
+    pub fn allocate_response(&mut self, size: Vec2, sense: Sense) -> Response {
+        let r = self.allocate(size);
         let id = self.next_id();
         self.interact(id, r, sense)
     }
@@ -184,7 +184,7 @@ impl<'a> Ui<'a> {
 
     /// Make the space used so far at least `size`, measured from the top left.
     pub fn reserve(&mut self, size: Vec2) {
-        self.content.max = self.content.max.max(self.max.min + size);
+        self.content.max = self.content.max.max(self.max_rect.min + size);
         match self.dir {
             Dir::Vertical => self.cursor.y = self.cursor.y.max(self.content.max.y),
             Dir::Horizontal { .. } => self.cursor.x = self.cursor.x.max(self.content.max.x),
@@ -223,7 +223,7 @@ impl<'a> Ui<'a> {
     ///
     /// ```
     /// # use rust_glass::prelude::*;
-    /// # use rust_glass::access::Role;
+    /// # use rust_glass::accessibility::Role;
     /// # fn f(ui: &mut Ui, r: Response, on: bool) {
     /// if let Some(n) = ui.access(r.id, Role::Switch, r.rect) {
     ///     n.label("Airplane mode").toggled(on);
@@ -295,10 +295,10 @@ impl<'a> Ui<'a> {
         let row = prev.y;
         // Nested in another row: center this one too.
         let y = match self.dir {
-            Dir::Horizontal { row: outer } => self.max.min.y + ((outer - row) * 0.5).max(0.0),
+            Dir::Horizontal { row: outer } => self.max_rect.min.y + ((outer - row) * 0.5).max(0.0),
             Dir::Vertical => start.y,
         };
-        let max = Rect { min: vec2(x, y), max: vec2(self.max.max.x.max(x), self.max.max.y) };
+        let max = Rect { min: vec2(x, y), max: vec2(self.max_rect.max.x.max(x), self.max_rect.max.y) };
         let mut ui = self.sub(id, max, Dir::Horizontal { row });
         ui.align = Align::Start;
         let out = f(&mut ui);
@@ -308,7 +308,7 @@ impl<'a> Ui<'a> {
             (Align::Start, _) | (_, Dir::Horizontal { .. }) => used,
             _ => vec2(avail, used.y),
         };
-        self.alloc(taken);
+        self.allocate(taken);
         out
     }
 
@@ -319,16 +319,16 @@ impl<'a> Ui<'a> {
         let gap = if self.first { 0.0 } else { self.spacing };
         let start = match self.dir {
             Dir::Horizontal { row } => {
-                vec2(self.cursor.x + gap, self.max.min.y + ((row - prev.y) * 0.5).max(0.0))
+                vec2(self.cursor.x + gap, self.max_rect.min.y + ((row - prev.y) * 0.5).max(0.0))
             }
             Dir::Vertical => self.cursor + vec2(0.0, gap),
         };
-        let max = Rect { min: start, max: vec2(start.x + width, self.max.max.y) };
+        let max = Rect { min: start, max: vec2(start.x + width, self.max_rect.max.y) };
         let mut ui = self.sub(id, max, Dir::Vertical);
         let out = f(&mut ui);
         let used = ui.content.size();
         self.remember(id, used);
-        self.alloc(vec2(width, used.y));
+        self.allocate(vec2(width, used.y));
         out
     }
 
@@ -346,17 +346,17 @@ impl<'a> Ui<'a> {
         let gap = if self.first { 0.0 } else { self.spacing };
         let start = match self.dir {
             Dir::Horizontal { row } => {
-                vec2(self.cursor.x + gap, self.max.min.y + ((row - prev.y) * 0.5).max(0.0))
+                vec2(self.cursor.x + gap, self.max_rect.min.y + ((row - prev.y) * 0.5).max(0.0))
             }
             Dir::Vertical => self.cursor + vec2(0.0, gap),
         };
-        let max = Rect { min: start, max: self.max.max.max(start) };
+        let max = Rect { min: start, max: self.max_rect.max.max(start) };
         let mut ui = self.sub(id, max, Dir::Vertical);
         let out = f(&mut ui);
         let used = ui.content.size();
         self.remember(id, used);
         let align = std::mem::replace(&mut self.align, Align::Start);
-        let r = self.alloc(used);
+        let r = self.allocate(used);
         self.align = align;
         (out, r)
     }
@@ -371,12 +371,12 @@ impl<'a> Ui<'a> {
         let mut h: f32 = 0.0;
         for i in 0..n {
             let min = vec2(left + i as f32 * (w + gap), top);
-            let max = Rect { min, max: vec2(min.x + w, self.max.max.y) };
+            let max = Rect { min, max: vec2(min.x + w, self.max_rect.max.y) };
             let mut ui = self.sub(id.with(i), max, Dir::Vertical);
             f(&mut ui, i);
             h = h.max(ui.content.height());
         }
-        self.alloc(vec2(w * n as f32 + gap * (n as f32 - 1.0), h));
+        self.allocate(vec2(w * n as f32 + gap * (n as f32 - 1.0), h));
     }
 
     /// Inset region.
@@ -384,11 +384,11 @@ impl<'a> Ui<'a> {
         let id = self.next_id();
         let gap = if self.first || self.is_horizontal() { 0.0 } else { self.spacing };
         let start = self.cursor + vec2(0.0, gap);
-        let max = Rect { min: start + pad, max: vec2(self.max.max.x - pad.x, self.max.max.y) };
+        let max = Rect { min: start + pad, max: vec2(self.max_rect.max.x - pad.x, self.max_rect.max.y) };
         let mut ui = self.sub(id, max, Dir::Vertical);
         let out = f(&mut ui);
         let used = ui.content.size();
-        self.alloc(vec2(self.available_width(), used.y + pad.y * 2.0));
+        self.allocate(vec2(self.available_width(), used.y + pad.y * 2.0));
         out
     }
 
@@ -430,12 +430,12 @@ impl<'a> Ui<'a> {
         let r = Rect::from_min_size(start, vec2(w, h));
         let fill = if self.surface.dark() > 0.5 { Color::gray(0.13).alpha(0.82) } else { Color::white(0.80) };
         self.painter().fill(r, 20.0, fill);
-        let max = Rect { min: start + vec2(18.0, 16.0), max: vec2(start.x + w - 18.0, self.max.max.y) };
+        let max = Rect { min: start + vec2(18.0, 16.0), max: vec2(start.x + w - 18.0, self.max_rect.max.y) };
         let mut ui = self.sub(id, max, Dir::Vertical);
         let out = f(&mut ui);
         let used = ui.content.height() + 32.0;
         self.remember(id.with("card"), vec2(w, used));
-        self.alloc(vec2(w, used));
+        self.allocate(vec2(w, used));
         out
     }
 
@@ -448,13 +448,13 @@ impl<'a> Ui<'a> {
         let h = self.size_of(id.with("card")).y;
         let r = Rect::from_min_size(start, vec2(w, h));
         let surface = self.glass(id, r, Corner::Radius(24.0), material, false);
-        let max = Rect { min: start + vec2(18.0, 16.0), max: vec2(start.x + w - 18.0, self.max.max.y) };
+        let max = Rect { min: start + vec2(18.0, 16.0), max: vec2(start.x + w - 18.0, self.max_rect.max.y) };
         let mut ui = self.sub(id, max, Dir::Vertical);
         ui.surface = surface;
         let out = f(&mut ui);
         let used = ui.content.height() + 32.0;
         self.remember(id.with("card"), vec2(w, used));
-        self.alloc(vec2(w, used));
+        self.allocate(vec2(w, used));
         out
     }
 
@@ -470,19 +470,19 @@ impl<'a> Ui<'a> {
 
     pub fn label(&mut self, text: &str) -> Response {
         let c = self.surface.text();
-        self.text_with(text, TextStyle::new(self.ctx.theme.body), c)
+        self.styled_text(text, TextStyle::new(self.ctx.theme.body), c)
     }
     pub fn secondary(&mut self, text: &str) -> Response {
         let c = self.surface.secondary();
-        self.text_with(text, TextStyle::new(self.ctx.theme.body), c)
+        self.styled_text(text, TextStyle::new(self.ctx.theme.body), c)
     }
     pub fn caption(&mut self, text: &str) -> Response {
         let c = self.surface.secondary();
-        self.text_with(text, TextStyle::new(self.ctx.theme.caption), c)
+        self.styled_text(text, TextStyle::new(self.ctx.theme.caption), c)
     }
     pub fn strong(&mut self, text: &str) -> Response {
         let c = self.surface.text();
-        self.text_with(text, TextStyle::new(self.ctx.theme.body).weight(Weight::Semibold), c)
+        self.styled_text(text, TextStyle::new(self.ctx.theme.body).weight(Weight::Semibold), c)
     }
     pub fn heading(&mut self, text: &str) -> Response {
         let c = self.surface.text();
@@ -491,19 +491,19 @@ impl<'a> Ui<'a> {
     }
     pub fn subheading(&mut self, text: &str) -> Response {
         let c = self.surface.text();
-        self.text_with(text, TextStyle::new(17.0).weight(Weight::Semibold), c)
+        self.styled_text(text, TextStyle::new(17.0).weight(Weight::Semibold), c)
     }
 
-    pub fn text_with(&mut self, text: &str, st: TextStyle, c: Color) -> Response {
+    pub fn styled_text(&mut self, text: &str, st: TextStyle, c: Color) -> Response {
         self.text_role(text, st, c, Role::Label)
     }
 
     fn text_role(&mut self, text: &str, mut st: TextStyle, c: Color, role: Role) -> Response {
         if !self.is_horizontal() && st.wrap.is_none() {
-            st.wrap = Some(self.max.width().max(10.0));
+            st.wrap = Some(self.max_rect.width().max(10.0));
         }
         let l = self.layout_text(text, &st);
-        let r = self.alloc(l.size);
+        let r = self.allocate(l.size);
         self.painter().text(r.min, &l, c);
         let id = self.next_id();
         if let Some(n) = self.access(id, role, r) {
@@ -531,12 +531,12 @@ impl<'a> Ui<'a> {
         match self.dir {
             Dir::Vertical => {
                 let w = self.available_width();
-                let r = self.alloc(vec2(w, 1.0));
+                let r = self.allocate(vec2(w, 1.0));
                 self.painter().fill(r, 0.0, c);
             }
             Dir::Horizontal { row } => {
                 let h = row.max(20.0) * 0.6;
-                let r = self.alloc(vec2(1.0, h));
+                let r = self.allocate(vec2(1.0, h));
                 self.painter().fill(r, 0.0, c);
             }
         }

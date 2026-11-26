@@ -9,11 +9,11 @@ use cosmic_text::{
     SwashCache, SwashContent, Weight as CtWeight, Wrap, fontdb,
 };
 
-use crate::geom::{Vec2, vec2};
-use crate::icons::Icon;
+use crate::geometry::{Vec2, vec2};
+use crate::icon::Icon;
 
-pub const ATLAS_SIZE: u32 = 2048;
-pub const SPRITE_ATLAS_SIZE: u32 = 1024;
+pub(crate) const ATLAS_SIZE: u32 = 2048;
+pub(crate) const SPRITE_ATLAS_SIZE: u32 = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Weight {
@@ -75,10 +75,9 @@ impl TextStyle {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Glyph {
+pub(crate) struct Glyph {
     /// Pen position in points, relative to the layout origin. `y` is the baseline.
     pub pos: Vec2,
-    pub advance: f32,
     font: fontdb::ID,
     glyph: u16,
     weight: CtWeight,
@@ -86,7 +85,7 @@ pub struct Glyph {
 }
 
 #[derive(Clone, Debug)]
-pub struct Line {
+pub(crate) struct Line {
     pub top: f32,
     pub height: f32,
     /// Byte range in the source text.
@@ -100,8 +99,8 @@ pub struct Line {
 pub struct TextLayout {
     pub size: Vec2,
     pub font_size: f32,
-    pub glyphs: Vec<Glyph>,
-    pub lines: Vec<Line>,
+    pub(crate) glyphs: Vec<Glyph>,
+    pub(crate) lines: Vec<Line>,
 }
 
 impl TextLayout {
@@ -139,14 +138,14 @@ impl TextLayout {
 
 /// Where a rasterized glyph lives in its atlas.
 #[derive(Clone, Copy, Debug)]
-pub struct AtlasEntry {
+pub(crate) struct AtlasEntry {
     pub uv: [f32; 4],
     pub offset: Vec2,
     pub size: Vec2,
     pub color: bool,
 }
 
-pub struct AtlasUpload {
+pub(crate) struct AtlasUpload {
     pub color: bool,
     pub x: u32,
     pub y: u32,
@@ -166,7 +165,7 @@ impl Shelf {
     fn new(size: u32) -> Self {
         Self { size, x: 1, y: 1, row: 0 }
     }
-    fn alloc(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+    fn allocate(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
         if self.x + w + 1 > self.size {
             self.x = 1;
             self.y += self.row + 1;
@@ -189,14 +188,14 @@ enum Key {
 }
 
 pub struct TextEngine {
-    pub fonts: FontSystem,
+    pub(crate) fonts: FontSystem,
     swash: SwashCache,
     buffer: Buffer,
     layouts: HashMap<u64, (Rc<TextLayout>, u64)>,
     atlas: HashMap<Key, Option<AtlasEntry>>,
     shelf: Shelf,
     sprite_shelf: Shelf,
-    pub uploads: Vec<AtlasUpload>,
+    pub(crate) uploads: Vec<AtlasUpload>,
     pub sans: String,
     pub mono: String,
     frame: u64,
@@ -264,7 +263,7 @@ impl TextEngine {
         self.layouts.clear();
     }
 
-    pub fn begin_frame(&mut self, ppp: f32) {
+    pub(crate) fn begin_frame(&mut self, ppp: f32) {
         self.frame += 1;
         if ppp != self.ppp {
             self.ppp = ppp;
@@ -342,7 +341,6 @@ impl TextEngine {
                         (g.x + g.font_size * g.x_offset) / ppp,
                         (run.line_y + g.y - g.font_size * g.y_offset) / ppp,
                     ),
-                    advance: g.w / ppp,
                     font: g.font_id,
                     glyph: g.glyph_id,
                     weight: g.font_weight,
@@ -383,7 +381,7 @@ impl TextEngine {
 
     /// Rasterize (or fetch) a glyph drawn at pixel position `pos`. Returns the
     /// entry plus the integer pixel origin.
-    pub fn glyph(&mut self, g: &Glyph, px: f32, pos: Vec2) -> Option<(AtlasEntry, Vec2)> {
+    pub(crate) fn glyph(&mut self, g: &Glyph, px: f32, pos: Vec2) -> Option<(AtlasEntry, Vec2)> {
         let (key, x, y) = CacheKey::new(g.font, g.glyph, px, (pos.x, pos.y), g.weight, g.flags);
         let k = Key::Glyph(key);
         let origin = vec2(x as f32, y as f32);
@@ -407,7 +405,7 @@ impl TextEngine {
     }
 
     /// Icon rasterized at `px` by `px` pixels.
-    pub fn icon(&mut self, icon: Icon, px: u32) -> Option<AtlasEntry> {
+    pub(crate) fn icon(&mut self, icon: Icon, px: u32) -> Option<AtlasEntry> {
         let k = Key::Icon(icon, px);
         if let Some(e) = self.atlas.get(&k) {
             return *e;
@@ -424,7 +422,7 @@ impl TextEngine {
         } else {
             (&mut self.shelf, ATLAS_SIZE as f32)
         };
-        let Some((x, y)) = shelf.alloc(w, h) else {
+        let Some((x, y)) = shelf.allocate(w, h) else {
             self.full = true;
             return None;
         };
@@ -438,7 +436,7 @@ impl TextEngine {
     }
 
     /// The atlas overflowed during this frame; it is rebuilt on the next one.
-    pub fn needs_rebuild(&self) -> bool {
+    pub(crate) fn needs_rebuild(&self) -> bool {
         self.full
     }
 }

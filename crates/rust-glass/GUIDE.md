@@ -96,7 +96,7 @@ The fields of `Options` are `title`, `size` and `min_size` in points, `vsync`, a
 
 `FrameInfo` holds timings of recent frames (`ui_ms`, `encode_ms`, `gpu.gpu_ms`, `interval_ms`) in case you want to show them.
 
-All lengths are in points. `ctx.screen` is the window, `ctx.ppp` the number of pixels per point.
+All lengths are in points. `ctx.screen` is the window, `ctx.pixels_per_point` the number of pixels per point.
 
 ## Put things on screen
 
@@ -107,7 +107,7 @@ All lengths are in points. `ctx.screen` is the window, `ctx.ppp` the number of p
 - `Window::new(title).show(ctx, |ui| ...)`: a glass window the user can drag and fold.
 - `popup`, `modal`, `sheet` and `context_menu`, covered below.
 
-`TabBar { .. }.show_at(ctx, id, center)` places a floating tab bar directly.
+`TabBar::new(..).show_at(ctx, id, center)` places a floating tab bar directly.
 
 Layers are stacked by `Order`: background, content, bars, windows, modals, popups, toasts, tooltips. Within one order, the layer that was clicked last is on top.
 
@@ -145,7 +145,7 @@ impl App for Mail {
 
         let tabs = [(Icon::Mail, "Mail"), (Icon::Calendar, "Calendar"), (Icon::Search, "Search")];
         let center = vec2(main.center().x, screen.max.y - 60.0);
-        TabBar { selected: &mut self.tab, tabs: &tabs }.show_at(ctx, Id::new("tabs"), center);
+        TabBar::new(&mut self.tab, &tabs).show_at(ctx, Id::new("tabs"), center);
     }
 }
 ```
@@ -320,20 +320,20 @@ fn form(ui: &mut Ui, f: &mut Form, color: &mut Color) {
         ui.add(Button::new("Plain").plain());
         ui.add(Button::new("Delete").icon(Icon::Trash).tinted(Color::RED));
         ui.add(Button::new("Large").large());
-        ui.icon_button(Icon::Plus).tip(ui, "New item");
+        ui.icon_button(Icon::Plus).on_hover_text(ui, "New item");
     });
     if let Some(i) = ButtonGroup::new(&[(Icon::Share, "Share"), (Icon::Copy, "Copy")]).show(ui) {
         println!("clicked {i}");
     }
     let drops = [(Icon::Camera, Color::ORANGE), (Icon::Photo, Color::GREEN)];
-    if let Some(i) = (SplitButton { icon: Icon::Plus, items: &drops }).show(ui) {
+    if let Some(i) = SplitButton::new(Icon::Plus, &drops).show(ui) {
         println!("picked {i}");
     }
 
     // Values
     ui.slider(&mut f.volume, 0.0..=1.0);
     ui.add(Slider::new(&mut f.steps, 0.0..=8.0).step(1.0).width(300.0).tint(Color::PURPLE));
-    ui.add(Stepper { value: &mut f.count, range: 0..=10 });
+    ui.add(Stepper::new(&mut f.count, 0..=10));
     ui.add(DragValue::new(&mut f.size).range(0.0..=100.0).speed(0.5).suffix(" pt"));
     ui.color_picker(color);
 
@@ -344,7 +344,7 @@ fn form(ui: &mut Ui, f: &mut Form, color: &mut Color) {
     ui.radio(&mut f.choice, 1, "Second");
     ui.segmented(&mut f.range, &["Day", "Week", "Month"]);
     ui.add(Segmented::new(&mut f.tags, &["All", "Photos", "Links"]).fit());
-    ComboBox { selected: &mut f.quality, options: &["Low", "High"], width: 160.0 }.show(ui);
+    ComboBox::new(&mut f.quality, &["Low", "High"]).width(160.0).show(ui);
 
     // Text input
     ui.text_edit(&mut f.name, "Name");
@@ -354,12 +354,12 @@ fn form(ui: &mut Ui, f: &mut Form, color: &mut Color) {
 
     // Status
     ui.progress(0.4);
-    ui.add(Gauge { value: 0.7, size: 80.0, label: "70", tint: Color::GREEN });
+    ui.add(Gauge::new(0.7, "70").size(80.0).tint(Color::GREEN));
     ui.spinner();
 
     // Grouping
     section(ui, "Network", |ui| {
-        Row { icon: Some((Icon::Wifi, Color::BLUE)), title: "Wi-Fi" }.show(ui, |ui| {
+        SettingsRow::new("Wi-Fi").icon(Icon::Wifi, Color::BLUE).show(ui, |ui| {
             ui.add(Toggle::new(&mut f.wifi));
         });
     });
@@ -432,7 +432,7 @@ fn overlays(ctx: &mut Context, o: &mut Overlays) {
 
 `modal` is an `alert` with your own content. Escape closes menus, alerts, modals and sheets.
 
-`context_menu(ui.ctx, &response, width, |ui| ...)` opens a menu on a right click on the widget that returned `response`. `response.tip(ui, "text")` shows a tooltip.
+`context_menu(ui.ctx, &response, width, |ui| ...)` opens a menu on a right click on the widget that returned `response`. `response.on_hover_text(ui, "text")` shows a tooltip.
 
 ## Images and wallpaper
 
@@ -475,7 +475,7 @@ use rust_glass::prelude::*;
 fn configure(ctx: &mut Context) {
     ctx.theme.dark = true;
     ctx.theme.accent = Color::PINK;
-    ctx.theme.frost = 0.2;
+    ctx.theme.glass_tint = 0.2;
     ctx.theme.body = 15.0;
 }
 ```
@@ -519,14 +519,14 @@ fn toolbar(ctx: &mut Context) {
     });
 
     // Used by every widget from now on.
-    ctx.theme.regular.chroma = 0.2;
+    ctx.theme.regular.dispersion = 0.2;
 }
 ```
 
 Parameters that change the look the most:
 
 - `refraction` and `depth`: how far the edge bends light, and how wide the bent zone is.
-- `chroma`: color fringes, as a fraction of the bend.
+- `dispersion`: color fringes, as a fraction of the bend.
 - `blur`: blur radius of the backdrop.
 - `light_range` and `dark_range`: the brightness range the backdrop is squeezed into. A narrow range near white keeps dark text legible over anything.
 - `rim`, `dark_edge`, `inner_glow`: light on the edge.
@@ -548,7 +548,7 @@ struct Stars<'a> {
 
 impl Widget for Stars<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let mut r = ui.alloc_interact(vec2(150.0, 30.0), Sense::Click);
+        let mut r = ui.allocate_response(vec2(150.0, 30.0), Sense::Click);
         if r.clicked()
             && let Some(p) = r.pointer
         {
@@ -582,7 +582,7 @@ use rust_glass::prelude::*;
 
 fn badge(ui: &mut Ui, text: &str) {
     let layout = ui.layout_text(text, &TextStyle::new(13.0).weight(Weight::Semibold));
-    let r = ui.alloc(layout.size + vec2(28.0, 14.0));
+    let r = ui.allocate(layout.size + vec2(28.0, 14.0));
     let id = ui.next_id();
     let material = ui.ctx.theme.regular;
     let surface = ui.glass(id, r, Corner::Capsule, material, true);
@@ -591,7 +591,7 @@ fn badge(ui: &mut Ui, text: &str) {
 
 // Two shapes in one element fuse like drops.
 fn drops(ui: &mut Ui, gap: f32) {
-    let r = ui.alloc(vec2(200.0, 60.0));
+    let r = ui.allocate(vec2(200.0, 60.0));
     let left = GlassShape::new(rect(r.min.x, r.min.y, 60.0, 60.0), Corner::Capsule);
     let right = GlassShape::new(rect(r.min.x + 60.0 + gap, r.min.y, 60.0, 60.0), Corner::Capsule);
     let mut glass = Glass::group(vec![left, right], ui.ctx.theme.regular).fuse(20.0);
@@ -612,8 +612,8 @@ use rust_glass::prelude::*;
 
 fn bar(ui: &mut Ui, open: bool) {
     let id = ui.make_id("bar");
-    let width = ui.ctx.animate(id, if open { 240.0 } else { 80.0 }, Tuning::GEL);
-    let r = ui.alloc(vec2(240.0, 40.0));
+    let width = ui.ctx.animate(id, if open { 240.0 } else { 80.0 }, Tuning::PRESS);
+    let r = ui.allocate(vec2(240.0, 40.0));
     let r = Rect::from_min_size(r.min, vec2(width, r.height()));
     let accent = ui.ctx.theme.accent;
     ui.painter().fill(r, Corner::Capsule, accent);
@@ -643,12 +643,12 @@ fn shortcuts(ctx: &mut Context, saved: &mut bool) {
 fn links(ui: &mut Ui) {
     ui.hyperlink("Source code", "https://github.com/MasterKPG/rust-glass");
     if ui.button("Copy").clicked() {
-        ui.ctx.copy("text for the clipboard");
+        ui.ctx.copy_text("text for the clipboard");
     }
 }
 
 fn quit(ctx: &mut Context) {
-    ctx.host.push(rust_glass::context::HostCmd::Close);
+    ctx.host_commands.push(rust_glass::context::HostCommand::Close);
 }
 ```
 
@@ -676,11 +676,11 @@ fn volume(ui: &mut Ui, v: &mut f32) {
 `Row` names the controls at its end after its title, so a settings list needs nothing extra. Your own widgets describe themselves with `ui.access`, which returns `None` while no screen reader listens:
 
 ```rust
-use rust_glass::access::Role;
+use rust_glass::accessibility::Role;
 use rust_glass::prelude::*;
 
 fn star(ui: &mut Ui, on: &mut bool) {
-    let r = ui.alloc_interact(vec2(28.0, 28.0), Sense::Click);
+    let r = ui.allocate_response(vec2(28.0, 28.0), Sense::Click);
     if r.clicked {
         *on = !*on;
     }

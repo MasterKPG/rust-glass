@@ -5,10 +5,10 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-use crate::access::{Access, Action, LayerInfo, Node, Role};
-use crate::anim::{Spring, Spring2, Tuning};
+use crate::accessibility::{Access, Action, LayerInfo, Node, Role};
+use crate::animation::{Spring, Spring2d, Tuning};
 use crate::color::Color;
-use crate::geom::{Rect, Vec2, vec2};
+use crate::geometry::{Rect, Vec2, vec2};
 use crate::input::{Event, Input, Key};
 use crate::material::Glass;
 use crate::paint::{ImageId, Paint, Painter};
@@ -126,14 +126,14 @@ struct Adapt {
 
 /// Result of [`Context::adapt`].
 #[derive(Clone, Copy, Debug)]
-pub struct Adapted {
+pub struct Backdrop {
     /// 0 light glass with dark labels, 1 dark glass with light labels.
     pub dark: f32,
     /// Extra shadow over busy content.
     pub boost: f32,
 }
 
-impl Adapted {
+impl Backdrop {
     pub fn surface(&self) -> Surface {
         Surface::Glass { dark: self.dark }
     }
@@ -141,13 +141,13 @@ impl Adapted {
 
 /// Requests from the UI to the host window.
 #[derive(Clone, Debug)]
-pub enum HostCmd {
+pub enum HostCommand {
     Copy(String),
     OpenUrl(String),
     Close,
 }
 
-pub struct ImageUpload {
+pub(crate) struct ImageUpload {
     pub id: ImageId,
     pub w: u32,
     pub h: u32,
@@ -157,17 +157,18 @@ pub struct ImageUpload {
 pub struct Context {
     pub input: Input,
     pub theme: Theme,
-    pub paint: Paint,
+    pub(crate) paint: Paint,
     pub text: TextEngine,
     pub time: f64,
     pub dt: f32,
     pub frame: u64,
     pub screen: Rect,
-    pub ppp: f32,
+    pub pixels_per_point: f32,
     pub clear: Color,
     pub cursor: Cursor,
-    pub host: Vec<HostCmd>,
-    pub uploads: Vec<ImageUpload>,
+    pub host_commands: Vec<HostCommand>,
+    pub(crate) uploads: Vec<ImageUpload>,
+    pub(crate) removed_images: Vec<ImageId>,
     /// Caret of the focused text field, where an input method shows its
     /// candidates. Set by the field every frame it has focus.
     pub ime: Option<Rect>,
@@ -190,7 +191,7 @@ pub struct Context {
     light: Spring,
     tilt: Vec2,
     scroll_energy: f32,
-    toasts: Vec<crate::widgets::overlay::ToastState>,
+    toasts: Vec<crate::widgets::toast::ToastState>,
     open_popups: HashMap<Id, bool>,
     access: Access,
     drawn: Vec<usize>,
@@ -223,11 +224,12 @@ impl Context {
             dt: 0.0,
             frame: 0,
             screen: Rect::default(),
-            ppp: 1.0,
+            pixels_per_point: 1.0,
             clear: Color::gray(0.85),
             cursor: Cursor::Default,
-            host: Vec::new(),
+            host_commands: Vec::new(),
             uploads: Vec::new(),
+            removed_images: Vec::new(),
             ime: None,
             next_image: 1,
             states: HashMap::new(),
@@ -263,7 +265,7 @@ impl Context {
         self.dt = ((time - self.time) as f32).clamp(0.0, 1.0 / 24.0);
         self.time = time;
         self.frame += 1;
-        self.ppp = ppp;
+        self.pixels_per_point = ppp;
         self.screen = Rect::from_min_size(Vec2::ZERO, size);
         self.cursor = Cursor::Default;
         self.repaint = false;
@@ -278,7 +280,7 @@ impl Context {
             }
         }
         self.paint.begin(ppp);
-        self.paint.frost = self.theme.frost;
+        self.paint.glass_tint = self.theme.glass_tint;
         self.paint.reduce_transparency = self.theme.reduce_transparency;
         self.paint.high_contrast = self.theme.high_contrast;
         self.text.begin_frame(ppp);
@@ -363,7 +365,7 @@ impl Context {
     }
 
     pub fn end_frame(&mut self) {
-        crate::widgets::overlay::show_toasts(self);
+        crate::widgets::toast::show_toasts(self);
         if self.input.released || !self.input.down {
             self.active = None;
             if self.drag.take().is_some() {
@@ -387,12 +389,12 @@ impl Context {
         order.sort_by_key(|&i| (self.layers[i].order, self.layers[i].z, i));
         self.paint.flatten(&order);
         self.drawn = order;
-        let a = self.light.x;
+        let a = self.light.value;
         let d = &mut self.paint.data;
         d.clear = self.clear.to_array();
         d.light = [a.sin(), -a.cos()];
         d.time = self.time as f32;
-        d.ppp = self.ppp;
+        d.ppp = self.pixels_per_point;
         if self.input.pending() || self.text.needs_rebuild() {
             self.repaint = true;
         }
@@ -456,18 +458,18 @@ impl Context {
     /// Spring driven value stored under `id`.
     pub fn animate(&mut self, id: Id, target: f32, t: Tuning) -> f32 {
         let mut s: Spring = self.get(id);
-        if s.step(target, self.tune(t), self.dt) {
+        if s.step(target, self.tuning(t), self.dt) {
             self.repaint = true;
         }
         self.set(id, s);
-        s.x
+        s.value
     }
     pub fn animate_bool(&mut self, id: Id, on: bool, t: Tuning) -> f32 {
         self.animate(id, on as u32 as f32, t)
     }
-    pub fn animate2(&mut self, id: Id, target: Vec2, t: Tuning) -> Spring2 {
-        let mut s: Spring2 = self.get(id);
-        if s.step(target, self.tune(t), self.dt) {
+    pub fn animate_vec2(&mut self, id: Id, target: Vec2, t: Tuning) -> Spring2d {
+        let mut s: Spring2d = self.get(id);
+        if s.step(target, self.tuning(t), self.dt) {
             self.repaint = true;
         }
         self.set(id, s);
@@ -475,7 +477,7 @@ impl Context {
     }
 
     /// Remove the elastic part when motion is reduced.
-    pub fn tune(&self, t: Tuning) -> Tuning {
+    pub fn tuning(&self, t: Tuning) -> Tuning {
         if self.theme.reduce_motion { Tuning::new(t.response.min(0.25), 1.0) } else { t }
     }
 
@@ -626,7 +628,7 @@ impl Context {
 
     /// Adaptive state for a glass element. `flips` is false for large surfaces,
     /// which keep the theme's appearance.
-    pub fn adapt(&mut self, id: Id, flips: bool) -> Adapted {
+    pub fn backdrop(&mut self, id: Id, flips: bool) -> Backdrop {
         let dark_theme = self.theme.dark;
         let adaptive = self.theme.adaptive;
         let f = self.frame;
@@ -651,7 +653,7 @@ impl Context {
         }
         let mut moving = a.dark.step(a.is_dark as u32 as f32, Tuning::new(0.32, 1.0), dt);
         moving |= a.boost.step((a.dev * 4.0).min(1.0), Tuning::new(0.4, 1.0), dt);
-        let out = Adapted { dark: a.dark.x.clamp(0.0, 1.0), boost: a.boost.x.clamp(0.0, 1.0) };
+        let out = Backdrop { dark: a.dark.value.clamp(0.0, 1.0), boost: a.boost.value.clamp(0.0, 1.0) };
         if moving {
             self.repaint = true;
         }
@@ -660,7 +662,7 @@ impl Context {
 
     /// Feed measurements from the renderer. Returns true when a redraw would
     /// look different.
-    pub fn apply_stats(&mut self, stats: &[(u64, f32, f32)]) -> bool {
+    pub(crate) fn apply_stats(&mut self, stats: &[(u64, f32, f32)]) -> bool {
         let mut changed = false;
         for &(k, mean, dev) in stats {
             if let Some(a) = self.adapt.get_mut(&k) {
@@ -681,8 +683,8 @@ impl Context {
     }
 
     /// Set the adaptive fields of `glass` and have its backdrop measured.
-    pub fn prepare_glass(&mut self, id: Id, glass: &mut Glass, flips: bool) -> Adapted {
-        let a = self.adapt(id, flips);
+    pub fn prepare_glass(&mut self, id: Id, glass: &mut Glass, flips: bool) -> Backdrop {
+        let a = self.backdrop(id, flips);
         glass.darkness = a.dark;
         glass.shadow_boost = a.boost;
         glass.stat_key = Some(id.0);
@@ -799,7 +801,14 @@ impl Context {
             .iter()
             .map(|&i| LayerInfo { index: i, id: self.layers[i].id, order: self.layers[i].order })
             .collect();
-        crate::access::tree(&self.access.nodes, &layers, self.focus, self.ppp, self.screen, title)
+        crate::accessibility::tree(
+            &self.access.nodes,
+            &layers,
+            self.focus,
+            self.pixels_per_point,
+            self.screen,
+            title,
+        )
     }
 
     // ----- drag and drop -----
@@ -848,21 +857,27 @@ impl Context {
         id
     }
 
-    pub fn copy(&mut self, s: impl Into<String>) {
-        self.host.push(HostCmd::Copy(s.into()));
+    /// Frees an image added with [`Self::add_image`]. Drawing it afterwards shows
+    /// nothing.
+    pub fn remove_image(&mut self, id: ImageId) {
+        self.removed_images.push(id);
+    }
+
+    pub fn copy_text(&mut self, s: impl Into<String>) {
+        self.host_commands.push(HostCommand::Copy(s.into()));
     }
 
     pub fn measure(&mut self, text: &str, size: f32, w: Weight) -> Vec2 {
         self.text.layout(text, &TextStyle::new(size).weight(w)).size
     }
 
-    pub fn toast(&mut self, icon: Option<crate::icons::Icon>, text: impl Into<String>) {
-        self.toasts.push(crate::widgets::overlay::ToastState::new(icon, text.into()));
+    pub fn toast(&mut self, icon: Option<crate::icon::Icon>, text: impl Into<String>) {
+        self.toasts.push(crate::widgets::toast::ToastState::new(icon, text.into()));
     }
-    pub(crate) fn take_toasts(&mut self) -> Vec<crate::widgets::overlay::ToastState> {
+    pub(crate) fn take_toasts(&mut self) -> Vec<crate::widgets::toast::ToastState> {
         std::mem::take(&mut self.toasts)
     }
-    pub(crate) fn put_toasts(&mut self, t: Vec<crate::widgets::overlay::ToastState>) {
+    pub(crate) fn put_toasts(&mut self, t: Vec<crate::widgets::toast::ToastState>) {
         self.toasts = t;
     }
 
@@ -886,10 +901,6 @@ impl Context {
     pub fn pointer_or(&self, p: Vec2) -> Vec2 {
         self.input.pointer.unwrap_or(p)
     }
-
-    pub fn center(&self) -> Vec2 {
-        vec2(self.screen.width() * 0.5, self.screen.height() * 0.5)
-    }
 }
 
 impl Adapt {
@@ -901,7 +912,7 @@ impl Adapt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geom::rect;
+    use crate::geometry::rect;
 
     fn frame(ctx: &mut Context, ev: &[Event], f: impl FnOnce(&mut Context)) {
         let t = ctx.time + 1.0 / 60.0;
@@ -961,7 +972,7 @@ mod tests {
             let mut d = 0.0;
             for _ in 0..120 {
                 c.apply_stats(&[(id.0, luma, 0.0)]);
-                frame(c, &[], |c| d = c.adapt(id, true).dark);
+                frame(c, &[], |c| d = c.backdrop(id, true).dark);
             }
             d
         };

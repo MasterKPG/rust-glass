@@ -12,9 +12,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key as WKey, NamedKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
-use crate::context::{Context, Cursor, HostCmd};
-use crate::geom::{Rect, vec2};
-use crate::gpu::{FrameStats, Gpu, Renderer};
+use crate::context::{Context, Cursor, HostCommand};
+use crate::geometry::{Rect, vec2};
+pub use crate::gpu::FrameStats;
+use crate::gpu::{Gpu, Renderer};
 use crate::input::{Event, Key, Modifiers};
 
 /// Timings of recent frames, readable from the UI.
@@ -64,7 +65,7 @@ pub fn run_ui(
     ctx: &mut Context,
     app: &mut dyn App,
     info: &FrameInfo,
-    size: crate::geom::Vec2,
+    size: crate::geometry::Vec2,
     ppp: f32,
     time: f64,
     events: &[Event],
@@ -228,6 +229,9 @@ impl<A: App> Host<A> {
             let id = live.renderer.add_image(u.w, u.h, &u.rgba);
             debug_assert_eq!(id, u.id);
         }
+        for id in self.ctx.removed_images.drain(..) {
+            live.renderer.remove_image(id);
+        }
         live.renderer.upload_atlas(&mut self.ctx.text.uploads);
 
         use wgpu::CurrentSurfaceTexture as C;
@@ -302,7 +306,7 @@ impl<A: App> ApplicationHandler<accesskit_winit::Event> for Host<A> {
         match ev.window_event {
             W::InitialTreeRequested => self.ctx.set_accessibility(true),
             W::ActionRequested(req) => {
-                if let Some((id, a)) = crate::access::from_accesskit(&req) {
+                if let Some((id, a)) = crate::accessibility::from_accesskit(&req) {
                     self.events.push(Event::Access(id, a));
                 }
             }
@@ -424,9 +428,9 @@ impl<A: App> ApplicationHandler<accesskit_winit::Event> for Host<A> {
             _ => dirty = false,
         }
         self.redraw |= dirty;
-        for c in std::mem::take(&mut self.ctx.host) {
+        for c in std::mem::take(&mut self.ctx.host_commands) {
             match c {
-                HostCmd::Copy(s) => {
+                HostCommand::Copy(s) => {
                     if self.clipboard.is_none() {
                         self.clipboard = arboard::Clipboard::new().ok();
                     }
@@ -434,8 +438,8 @@ impl<A: App> ApplicationHandler<accesskit_winit::Event> for Host<A> {
                         let _ = cb.set_text(s);
                     }
                 }
-                HostCmd::OpenUrl(u) => open_url(&u),
-                HostCmd::Close => el.exit(),
+                HostCommand::OpenUrl(u) => open_url(&u),
+                HostCommand::Close => el.exit(),
             }
         }
     }
