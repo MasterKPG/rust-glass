@@ -1,6 +1,8 @@
 //! A music app: content scrolls below a floating mini player and tab bar,
 //! the case Liquid Glass is made for.
 
+use rust_glass::context::Cursor;
+use rust_glass::input::Key;
 use rust_glass::prelude::*;
 use rust_glass::widgets::press::PressEffect;
 
@@ -37,12 +39,21 @@ pub struct State {
     /// Position in the song, 0 to 1.
     position: f32,
     tab: usize,
+    /// The album shown in the detail view, if one is open.
+    album: Option<usize>,
+    /// Runs from 0 to 1 while the list or the detail view appears.
+    appear: Spring,
 }
 
 impl Default for State {
     fn default() -> Self {
-        Self { playing: true, position: 0.34, tab: 0 }
+        Self { playing: true, position: 0.34, tab: 0, album: None, appear: Spring::new(1.0) }
     }
+}
+
+/// The view that shows an album cover, for [`Context::morph`].
+fn cover_view(detail: bool) -> Id {
+    Id::new(if detail { "album detail" } else { "album grid" })
 }
 
 pub fn show(state: &mut State, marks: &mut Marks, covers: &[ImageId], ctx: &mut Context, area: Rect) {
@@ -53,16 +64,31 @@ pub fn show(state: &mut State, marks: &mut Marks, covers: &[ImageId], ctx: &mut 
         ui.painter().fill(sheet, 26.0, background);
         ui.mask = ui.painter().add_mask(sheet, 26.0, false, Default::default());
         ui.clip = sheet;
+        let tuning = ui.ctx.tuning(Tuning::new(0.42, 1.0));
+        if state.appear.step(1.0, tuning, ui.ctx.dt) {
+            ui.ctx.request_repaint();
+        }
+        let appear = state.appear.value;
+        let before = state.album;
         ui.in_rect("content", sheet, |ui| {
             // The bottom inset keeps the last rows clear of the floating bars.
             let (_, rect) = ui.scope(|ui| {
-                ScrollArea::new().insets(24.0, 170.0).show(ui, |ui| {
-                    ui.spacing = 14.0;
-                    ui.padded(vec2(26.0, 0.0), |ui| songs(ui, &cover));
-                });
+                ScrollArea::new()
+                    .id(if before.is_some() { "album" } else { "songs" })
+                    .insets(24.0, 170.0)
+                    .show(ui, |ui| {
+                        ui.spacing = 14.0;
+                        ui.padded(vec2(26.0, 0.0), |ui| match before {
+                            Some(album) => album_detail(ui, &mut state.album, album, &cover, marks, appear),
+                            None => songs(ui, &mut state.album, &cover, marks, appear),
+                        });
+                    });
             });
             marks.set("player content", rect);
         });
+        if state.album != before {
+            state.appear = Spring::new(0.0);
+        }
     });
 
     if state.playing {
@@ -81,15 +107,54 @@ pub fn show(state: &mut State, marks: &mut Marks, covers: &[ImageId], ctx: &mut 
     marks.set("player tab bar", Rect::from_center_size(tab_center, vec2(400.0, 62.0)));
 }
 
-fn songs(ui: &mut Ui, cover: &dyn Fn(usize) -> ImageId) {
+/// Draws an album cover that morphs between the grid and the detail view.
+/// Returns the response of its place in the layout.
+fn album_cover(ui: &mut Ui, album: usize, image: ImageId, size: f32, detail: bool) -> Response {
+    let response = ui.allocate_response(vec2(size, size), Sense::Click);
+    let key = Id::new(("album cover", album));
+    let shown = ui.ctx.morph(key, cover_view(detail), response.rect);
+    let corner = if detail { 22.0 } else { 14.0 };
+    if ui.ctx.is_morphing(key) {
+        // On its way, the cover flies above everything else on the page.
+        let layer = ui.ctx.layer(Id::new("flying cover"), Order::Content);
+        let mut painter = ui.ctx.painter(layer, ui.clip);
+        painter.mask = ui.mask;
+        painter.shadow(shown.translate(vec2(0.0, 8.0)), corner, 18.0, Color::black(0.25));
+        painter.image(shown, corner, image, rect(0.0, 0.0, 1.0, 1.0), Color::WHITE);
+    } else {
+        ui.painter().image(shown, corner, image, rect(0.0, 0.0, 1.0, 1.0), Color::WHITE);
+    }
+    if response.hovered() {
+        ui.ctx.cursor = Cursor::Pointer;
+    }
+    response
+}
+
+fn songs(
+    ui: &mut Ui,
+    open: &mut Option<usize>,
+    cover: &dyn Fn(usize) -> ImageId,
+    marks: &mut Marks,
+    appear: f32,
+) {
+    ui.opacity = appear;
     ui.heading("New Releases");
     let columns = ((ui.available_width() / 190.0) as usize).clamp(2, 5);
     for start in (0..SONGS.len()).step_by(columns) {
         ui.grid(columns, 20.0, |ui, column| {
-            let Some((title, artist)) = SONGS.get(start + column) else { return };
+            let album = start + column;
+            let Some((title, artist)) = SONGS.get(album) else { return };
             ui.spacing = 3.0;
             let width = ui.available_width();
-            ui.image(cover(start + column), vec2(width, width), 14.0);
+            let opacity = std::mem::replace(&mut ui.opacity, 1.0);
+            let response = album_cover(ui, album, cover(album), width, false);
+            ui.opacity = opacity;
+            if album == 0 {
+                marks.set("first album", response.rect);
+            }
+            if response.clicked() {
+                *open = Some(album);
+            }
             ui.space(4.0);
             ui.strong(title);
             ui.secondary(artist);
@@ -104,6 +169,45 @@ fn songs(ui: &mut Ui, cover: &dyn Fn(usize) -> ImageId) {
                 ui.strong(title);
                 ui.secondary(artist);
             });
+        });
+        ui.separator();
+    }
+}
+
+fn album_detail(
+    ui: &mut Ui,
+    open: &mut Option<usize>,
+    album: usize,
+    cover: &dyn Fn(usize) -> ImageId,
+    marks: &mut Marks,
+    appear: f32,
+) {
+    let (title, artist) = SONGS[album];
+    ui.opacity = appear;
+    let back = ui.add(Button::new("New Releases").icon(Icon::ChevronLeft).plain());
+    marks.set("album back", back.rect);
+    if back.clicked() || ui.ctx.input.take_key(Key::Escape) {
+        *open = None;
+    }
+    ui.horizontal(|ui| {
+        ui.opacity = 1.0;
+        album_cover(ui, album, cover(album), 260.0, true);
+        ui.opacity = appear;
+        ui.vertical(320.0, |ui| {
+            ui.heading(title);
+            ui.subheading(artist);
+            ui.secondary("Album, 2026");
+            ui.space(8.0);
+            ui.horizontal(|ui| {
+                ui.add(Button::new("Play").icon(Icon::Play).prominent());
+                ui.add(Button::new("Shuffle"));
+            });
+        });
+    });
+    for (i, (song, _)) in SONGS.iter().cycle().skip(album).take(6).enumerate() {
+        ui.horizontal(|ui| {
+            ui.vertical(32.0, |ui| ui.secondary(&(i + 1).to_string()));
+            ui.label(song);
         });
         ui.separator();
     }

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use crate::accessibility::{Access, Action, LayerInfo, Node, Role};
-use crate::animation::{Spring, Spring2d, Tuning};
+use crate::animation::{Spring, Spring2d, SpringRect, Tuning};
 use crate::color::Color;
 use crate::geometry::{Rect, Vec2, vec2};
 use crate::input::{Event, Input, Key};
@@ -265,6 +265,16 @@ pub struct Context {
     access: Access,
     drawn: Vec<usize>,
     drag: Option<Drag>,
+    morphs: HashMap<Id, Morph>,
+}
+
+/// An element shown by one view after another. See [`Context::morph`].
+#[derive(Clone, Copy)]
+struct Morph {
+    view: Id,
+    shape: SpringRect,
+    moving: bool,
+    seen: u64,
 }
 
 /// Something picked up with [`Ui::drag_source`](crate::Ui::drag_source).
@@ -327,6 +337,7 @@ impl Context {
             access: Access::default(),
             drawn: Vec::new(),
             drag: None,
+            morphs: HashMap::new(),
         }
     }
 
@@ -467,6 +478,7 @@ impl Context {
             let f = self.frame;
             self.states.retain(|_, v| f - v.1 < 1200);
             self.adapt.retain(|_, a| f - a.used < 1200);
+            self.morphs.retain(|_, m| f - m.seen < 1200);
         }
         let mut order: Vec<usize> =
             (0..self.layers.len()).filter(|&i| self.layers[i].used == self.frame).collect();
@@ -928,6 +940,63 @@ impl Context {
         )
     }
 
+    // ----- morphing between views -----
+
+    /// Moves an element from the view that showed it before to the view that
+    /// shows it now, such as a cover that grows from a grid into a detail
+    /// page.
+    ///
+    /// Call it every frame the element is drawn, with the same `key` from
+    /// every view, the `view` that draws it, and where that view puts it.
+    /// Draw the element at the returned rectangle. While the view stays the
+    /// same, the result is `rect`. When the view changes, it travels from the
+    /// old place to `rect` on a spring. An element that was not drawn for 20
+    /// seconds starts over where it is.
+    ///
+    /// ```
+    /// # use rust_glass::prelude::*;
+    /// # fn f(ui: &mut Ui, image: ImageId, open: bool) {
+    /// let key = Id::new(("cover", 7));
+    /// let (view, place) = if open {
+    ///     (Id::new("detail"), rect(40.0, 40.0, 320.0, 320.0))
+    /// } else {
+    ///     (Id::new("grid"), ui.allocate(vec2(120.0, 120.0)))
+    /// };
+    /// let shown = ui.ctx.morph(key, view, place);
+    /// ui.painter().image(shown, 14.0, image, rect(0.0, 0.0, 1.0, 1.0), Color::WHITE);
+    /// # }
+    /// ```
+    pub fn morph(&mut self, key: Id, view: Id, rect: Rect) -> Rect {
+        let frame = self.frame;
+        let fresh = Morph { view, shape: SpringRect::new(rect), moving: false, seen: frame };
+        let mut morph = match self.morphs.get(&key) {
+            Some(m) if frame - m.seen < 1200 => *m,
+            _ => fresh,
+        };
+        if morph.view != view {
+            morph.view = view;
+            morph.moving = true;
+        }
+        let shown = if morph.moving {
+            let center = self.tuning(Tuning::new(0.44, 0.84));
+            let size = self.tuning(Tuning::new(0.44, 0.92));
+            morph.moving = morph.shape.step(rect, center, size, self.dt);
+            self.repaint = true;
+            if morph.moving { morph.shape.rect() } else { rect }
+        } else {
+            morph.shape = SpringRect::new(rect);
+            rect
+        };
+        morph.seen = frame;
+        self.morphs.insert(key, morph);
+        shown
+    }
+
+    /// Returns `true` while the element `key` travels between views.
+    pub fn is_morphing(&self, key: Id) -> bool {
+        self.morphs.get(&key).is_some_and(|m| m.moving)
+    }
+
     // ----- drag and drop -----
 
     /// Picks up `payload`. [`Ui::drag_source`](crate::Ui::drag_source) calls it
@@ -1112,5 +1181,30 @@ mod tests {
         assert_eq!(settle(&mut c, 0.1), 1.0);
         assert_eq!(settle(&mut c, 0.36), 1.0);
         assert_eq!(settle(&mut c, 0.6), 0.0);
+    }
+
+    #[test]
+    fn morph_follows_its_view_and_travels_to_a_new_one() {
+        let mut c = Context::new();
+        let key = Id::new("cover");
+        let (grid, detail) = (Id::new("grid"), Id::new("detail"));
+        let small = rect(10.0, 10.0, 50.0, 50.0);
+        let large = rect(100.0, 100.0, 200.0, 200.0);
+        let mut shown = Rect::default();
+        frame(&mut c, &[], |c| shown = c.morph(key, grid, small));
+        assert_eq!(shown, small);
+        // Same view, new place: follows at once, as when a list scrolls.
+        let moved = small.translate(vec2(0.0, 30.0));
+        frame(&mut c, &[], |c| shown = c.morph(key, grid, moved));
+        assert_eq!(shown, moved);
+        // Another view: travels there.
+        frame(&mut c, &[], |c| shown = c.morph(key, detail, large));
+        assert!(shown.width() < large.width() && shown.min.x < large.min.x, "{shown:?}");
+        assert!(c.is_morphing(key));
+        for _ in 0..120 {
+            frame(&mut c, &[], |c| shown = c.morph(key, detail, large));
+        }
+        assert_eq!(shown, large);
+        assert!(!c.is_morphing(key));
     }
 }

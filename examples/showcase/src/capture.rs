@@ -174,6 +174,17 @@ pub fn pages(dir: &str) -> Result<(), String> {
     rig.scroll(rig.mark("player content"), 260.0);
     shot(&mut rig, "scroll")?;
 
+    // An album cover grows from the grid into the detail view.
+    rig.open(Page::Player, DUNES);
+    rig.scroll(rig.mark("player content"), -1000.0);
+    rig.click(rig.mark("first album"));
+    rig.wait(8);
+    shot(&mut rig, "album_morph")?;
+    rig.wait(60);
+    shot(&mut rig, "album")?;
+    rig.click(rig.mark("album back"));
+    rig.settle(2.0);
+
     rig.open(Page::Selection, RIBBONS);
     let tabs = rig.mark("tab bar");
     rig.press(tabs - vec2(154.0, 0.0));

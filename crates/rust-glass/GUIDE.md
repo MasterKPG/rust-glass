@@ -625,6 +625,8 @@ fn bar(ui: &mut Ui, open: bool) {
 
 Tunings: `SNAP` (no overshoot), `SMOOTH`, `PRESS` and `BOUNCY`, or `Tuning::new(response, damping)`, with the same meaning as a SwiftUI spring.
 
+`ctx.morph(key, view, rect)` moves an element from one view to another, such as a cover that grows from a grid into a detail page. Call it from whichever view draws the element, with the same key, and draw the element at the rectangle it returns. While the view stays the same the result is `rect`, so scrolling and layout changes follow at once.
+
 Call `ctx.request_repaint()` in every frame while something else moves, such as a video or a timer. `ctx.dt` is the time since the last frame in seconds and `ctx.time` the time since start. Nothing can wake an idle window from another thread yet. While a background job runs, request a repaint and poll its channel in `update`.
 
 ## Keyboard, clipboard and links

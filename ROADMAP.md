@@ -23,7 +23,7 @@ A Rust UI framework whose controls look and move like Liquid Glass on every desk
 Goal: an API that reads well, and transitions that keep glass on one continuous surface.
 - Clear names, one module per widget, API docs for every item (done on dev)
 - A showcase that is easy to read (done on dev)
-- Elements that morph from one view into another
+- Elements that morph from one view into another (done on dev)
 - Content blur during transitions
 - Touch gestures with momentum, and tilt from device sensors
 - Screen readers checked with VoiceOver and Orca
