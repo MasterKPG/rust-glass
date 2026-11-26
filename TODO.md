@@ -22,7 +22,7 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Image tests against stored reference renders
 
 ## Done (recent)
-- [x] Shorter README, roadmap and guide (2026-11-26)
+- [x] Shorter README, roadmap and guide (2026-11-26), guide examples checked by the doc tests
 - [x] Showcase that is easier to read: titled cards, labeled controls (2026-11-26)
 - [x] API docs for every public item (2026-11-26)
 - [x] Clear names and one module per widget (2026-11-26)

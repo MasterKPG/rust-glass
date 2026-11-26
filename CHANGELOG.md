@@ -21,7 +21,7 @@ All notable changes are listed here. Format: Keep a Changelog.
 - Breaking: renamed `Context::clear` to `clear_color`, `Context::ime` to `ime_area`, `Input::secondary` to `secondary_clicked`, `Input::double` to `double_clicked`, `Cursor::ResizeH` to `ResizeHorizontal` and `PressEffect::press` to `amount`.
 - Breaking: `FrameStats::gpu_ms` is an `Option`. It is `None` where the GPU cannot measure time, such as the virtual machines of the macOS runners.
 - Parameters of public functions have full names, such as `rect` and `color` instead of `r` and `c`.
-- Shorter README and roadmap. The guide uses the new names and says which screen readers have been tried.
+- Shorter README and roadmap. The guide uses the new names and says which screen readers have been tried. Its examples compile again after the renames.
 - Breaking: `Panel::flips` is now `Panel::adaptive`.
 - `section` draws its title inside the card, so it stays readable over any wallpaper. Cards are a little more opaque.
 - The showcase puts every group of widgets on a card with a title and a one line explanation, labels every control, and draws page titles on a soft shade. Debug timings moved from the sidebar to the Material Lab, and the Reference page left the showcase (the `reference` binary still replays the reference gestures).

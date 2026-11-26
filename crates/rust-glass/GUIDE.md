@@ -185,7 +185,9 @@ fn layout(ui: &mut Ui) {
 
     ui.padded(vec2(20.0, 10.0), |ui| ui.label("Inset"));
     ui.card(|ui| ui.label("On a card"));
-    section(ui, "Title", |ui| ui.label("On a card under a title"));
+    section(ui, "Title", |ui| {
+        ui.label("On a card under a title");
+    });
     ui.space(12.0);
     ui.separator();
 
