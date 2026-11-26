@@ -103,6 +103,16 @@ impl Rig {
         }
     }
 
+    /// Scrolls the page until the marked widget is in the upper part of the
+    /// window.
+    fn reveal(&mut self, name: &str) {
+        let below = self.mark(name).y - self.host.ctx.screen.height() * 0.4;
+        if below > 0.0 {
+            let over = vec2(self.mark(name).x, self.host.ctx.screen.height() * 0.5);
+            self.scroll(over, below);
+        }
+    }
+
     fn scroll(&mut self, over: Vec2, amount: f32) {
         self.move_to(over);
         self.step(&[Event::Scroll(vec2(0.0, -amount))]);
@@ -163,6 +173,7 @@ pub fn pages(dir: &str) -> Result<(), String> {
     shot(&mut rig, "press")?;
 
     rig.open(Page::Buttons, PETALS);
+    rig.reveal("split button");
     rig.click(rig.mark("split button"));
     rig.wait(7);
     shot(&mut rig, "split")?;
@@ -319,6 +330,7 @@ pub fn preview(dir: &str) -> Result<(), String> {
     }
 
     rig.open(Page::Buttons, PETALS);
+    rig.reveal("split button");
     rig.click(rig.mark("split button"));
     rig.settle(2.0);
     save(&rig, "buttons-split")?;
@@ -333,7 +345,23 @@ pub fn preview(dir: &str) -> Result<(), String> {
     rig.settle(1.5);
     save(&rig, "menu")?;
 
-    // Clips.
+    rig.open(Page::Player, DUNES);
+    rig.scroll(rig.mark("player content"), -1000.0);
+    rig.click(rig.mark("first album"));
+    rig.settle(2.0);
+    save(&rig, "player-album")?;
+    rig.click(rig.mark("album back"));
+    rig.settle(2.0);
+
+    // Clips. Each also gets the rectangle to crop it to, in pixels, in
+    // `crops.txt`: name, x, y, width and height.
+    let mut crops = String::new();
+    let mut crop = |rig: &Rig, name: &str, area: Rect| {
+        let scale = rig.host.ctx.pixels_per_point;
+        let (min, size) = (area.min * scale, area.size() * scale);
+        let even = |v: f32| (v / 2.0).round() as i32 * 2;
+        crops += &format!("{name} {} {} {} {}\n", even(min.x), even(min.y), even(size.x), even(size.y));
+    };
     let clip = |rig: &mut Rig, name: &str, frames: usize, events: &mut dyn FnMut(usize) -> Vec<Event>| {
         let folder = format!("{dir}/frames-{name}");
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
@@ -358,6 +386,7 @@ pub fn preview(dir: &str) -> Result<(), String> {
     let tabs = rig.mark("player tab bar");
     let tab = |i: usize| vec2(tabs.x - 154.0 + 77.0 * i as f32, tabs.y);
     let keys = [tab(0), tab(3), tab(1), tab(4), tab(2)];
+    crop(&rig, "tabs", rig.rect("player tab bar").expand2(vec2(40.0, 34.0)));
     clip(&mut rig, "tabs", 210, &mut |i| {
         let mut events = vec![Event::PointerMoved(along(&keys, i, 20, 34.0))];
         match i {
@@ -369,7 +398,12 @@ pub fn preview(dir: &str) -> Result<(), String> {
     })?;
 
     rig.open(Page::Buttons, PETALS);
+    rig.reveal("split button");
     let plus = rig.mark("split button");
+    let button = rig.rect("split button");
+    // The button and its four drops, which open to the right.
+    let drops = Rect::from_min_size(button.min, vec2(button.width() * 5.0 + 48.0, button.height()));
+    crop(&rig, "split", drops.expand2(vec2(24.0, 24.0)));
     clip(&mut rig, "split", 210, &mut |i| match i {
         0 => vec![Event::PointerMoved(plus)],
         12 | 86 | 140 | 158 => vec![Event::PointerDown],
@@ -380,6 +414,7 @@ pub fn preview(dir: &str) -> Result<(), String> {
     rig.open(Page::Controls, AURORA);
     let keys: Vec<Vec2> =
         [0.6, 0.95, 0.15, 0.8, 0.4, 0.6].iter().map(|v| rig.slider_point("volume slider", *v)).collect();
+    crop(&rig, "slider", rig.rect("volume slider").expand2(vec2(30.0, 22.0)));
     clip(&mut rig, "slider", 270, &mut |i| {
         let mut events = vec![Event::PointerMoved(along(&keys, i, 36, 32.0))];
         match i {
@@ -389,5 +424,5 @@ pub fn preview(dir: &str) -> Result<(), String> {
         }
         events
     })?;
-    Ok(())
+    std::fs::write(format!("{dir}/crops.txt"), crops).map_err(|e| e.to_string())
 }

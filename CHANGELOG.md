@@ -16,6 +16,7 @@ All notable changes are listed here. Format: Keep a Changelog.
 - API docs for every public item. Pushes to dev fail when the docs have warnings.
 
 ### Changed
+- New preview pictures and clips of the rebuilt showcase, including the album view and the Lists page. The preview run writes the crop of each clip next to its frames.
 - Breaking: each widget has its own module, such as `widgets::menu`, `widgets::dialog` and `widgets::toggle`. The old `bars`, `controls`, `overlay`, `gel` and `dnd` modules are gone. The prelude still exports every widget.
 - Breaking: `Checkbox`, `Radio`, `ProgressBar`, `Gauge`, `Spinner`, `Image`, `Collapsing`, `ColorPicker`, `Stepper`, `SplitButton`, `TabBar` and `ComboBox` are created with `new` and builder methods instead of struct literals. `Row` is now `SettingsRow`.
 - Breaking: renamed modules `anim` to `animation`, `geom` to `geometry`, `access` to `accessibility` and `icons` to `icon`.
