@@ -4,7 +4,7 @@
 use std::any::Any;
 use std::hash::Hash;
 
-use crate::animation::Tuning;
+use crate::animation::{Spring, Tuning};
 use crate::context::{Cursor, Id, Order, Response, Sense};
 use crate::geometry::{Rect, Vec2, vec2};
 use crate::material::Corner;
@@ -46,9 +46,19 @@ impl Ui<'_> {
         &mut self,
         id: impl Hash,
         payload: P,
-        mut f: impl FnMut(&mut Ui),
+        f: impl FnMut(&mut Ui),
     ) -> Response {
         let id = self.make_id(id);
+        self.drag_source_with_id(id, payload, f)
+    }
+
+    /// [`Ui::drag_source`] with an id that is already final.
+    fn drag_source_with_id<P: Any + Clone>(
+        &mut self,
+        id: Id,
+        payload: P,
+        mut f: impl FnMut(&mut Ui),
+    ) -> Response {
         let dragging = self.ctx.dragged_id() == Some(id);
         let old = self.opacity;
         if dragging {
@@ -113,9 +123,10 @@ impl Ui<'_> {
         (out, self.ctx.take_drop::<P>(rect))
     }
 
-    /// A vertical list whose items can be dragged into a new order. `T` is
-    /// hashed for the id of each item, so equal items need something that
-    /// tells them apart. Returns true in the frame the order changed.
+    /// A vertical list whose items can be dragged into a new order. While an
+    /// item is dragged, the others move apart to show where it will land.
+    /// `T` is hashed for the id of each item, so equal items need something
+    /// that tells them apart. Returns `true` in the frame the order changed.
     ///
     /// ```
     /// # use rust_glass::prelude::*;
@@ -132,33 +143,104 @@ impl Ui<'_> {
         mut f: impl FnMut(&mut Ui, &T),
     ) -> bool {
         let list = self.make_id(id);
-        let mut rects = Vec::with_capacity(items.len());
-        for (i, it) in items.iter().enumerate() {
-            let r = self.drag_source((list, it), Reorder { list, from: i }, |ui| f(ui, it));
-            rects.push(r.rect);
-        }
-        let Some(d) = self.ctx.dragged::<Reorder>().filter(|d| d.list == list) else { return false };
-        let Some(p) = self.ctx.input.pointer else { return false };
-        let area = rects.iter().fold(Rect::NOTHING, |a, r| a.union(*r));
-        if rects.is_empty() || !area.expand2(vec2(48.0, 28.0)).contains(p) {
+        let ids: Vec<Id> = items.iter().map(|item| self.make_id((list, item))).collect();
+        let dragged =
+            self.ctx.dragged::<Reorder>().filter(|d| d.list == list && d.from < items.len()).map(|d| d.from);
+        let mut state: ReorderState = self.ctx.get(list);
+        let gap_id = |slot: usize| list.with(("gap", slot));
+
+        let Some(from) = dragged else {
+            if state.active {
+                // The drag ended without a drop: the item is back in its place,
+                // which its gap was holding.
+                for slot in 0..=items.len() {
+                    self.ctx.set(gap_id(slot), Spring::new(0.0));
+                }
+                self.ctx.set(list, ReorderState::default());
+            }
+            for (i, item) in items.iter().enumerate() {
+                self.drag_source_with_id(ids[i], Reorder { list, from: i }, |ui| f(ui, item));
+            }
             return false;
-        }
-        let to = rects.iter().filter(|r| p.y > r.center().y).count();
-        let gap = self.spacing * 0.5;
-        let y = match to {
-            0 => rects[0].min.y - gap,
-            n if n == rects.len() => rects[n - 1].max.y + gap,
-            n => (rects[n - 1].max.y + rects[n].min.y) * 0.5,
         };
-        let c = self.ctx.theme.accent;
-        let line = Rect { min: vec2(area.min.x, y - 1.5), max: vec2(area.max.x, y + 1.5) };
-        self.painter().fill(line, Corner::Capsule, c);
-        if self.ctx.take_drop::<Reorder>(area.expand2(vec2(48.0, 28.0))).is_some() {
-            let item = items.remove(d.from);
-            let to = if to > d.from { to - 1 } else { to };
-            items.insert(to.min(items.len()), item);
+
+        if !state.active {
+            // The drag just started. Open a gap where the item was, at once,
+            // so nothing moves yet.
+            let height = self.ctx.drag_rect().map_or(0.0, |r| r.height()) + self.spacing;
+            state = ReorderState { active: true, slot: from, height };
+            self.ctx.set(gap_id(from), Spring::new(height));
+        }
+
+        // Lay out the other items with an animated gap before each one, and
+        // remember where they were before the drag started.
+        let mut centers = Vec::with_capacity(items.len());
+        let mut area = Rect::NOTHING;
+        let mut gaps = 0.0;
+        let mut slot = 0;
+        for (i, item) in items.iter().enumerate() {
+            if i == from {
+                // The dragged item takes no space. It is still drawn, hidden,
+                // because its drag source draws the lifted copy.
+                let rest = Rect::from_min_size(self.next_pos(), vec2(self.available_width(), 1.0e5));
+                self.in_rect(("dragged", i), rest, |ui| {
+                    ui.opacity = 0.0;
+                    ui.drag_source_with_id(ids[i], Reorder { list, from: i }, |ui| f(ui, item));
+                });
+                continue;
+            }
+            gaps += self.reorder_gap(gap_id(slot), state.slot == slot, state.height);
+            let rect = self.drag_source_with_id(ids[i], Reorder { list, from: i }, |ui| f(ui, item)).rect;
+            let below_dragged = if i > from { state.height } else { 0.0 };
+            centers.push(rect.center().y - gaps + below_dragged);
+            area = area.union(rect);
+            slot += 1;
+        }
+        self.reorder_gap(gap_id(slot), state.slot == slot, state.height);
+
+        // The item lands before the first item whose center is below its own.
+        // Outside the list it goes back to where it came from.
+        let reach = area.expand2(vec2(48.0, 28.0 + state.height));
+        let target = match (self.ctx.drag_rect(), self.ctx.input.pointer) {
+            (Some(lifted), Some(pointer)) if reach.contains(pointer) => {
+                centers.iter().filter(|&&c| c < lifted.center().y).count()
+            }
+            _ => from,
+        };
+        state.slot = target;
+        self.ctx.set(list, state);
+
+        if self.ctx.take_drop::<Reorder>(reach).is_some() {
+            let item = items.remove(from);
+            items.insert(target.min(items.len()), item);
+            // The item now fills the gap that was open for it.
+            for slot in 0..=items.len() {
+                self.ctx.set(gap_id(slot), Spring::new(0.0));
+            }
+            self.ctx.set(list, ReorderState::default());
             return true;
         }
         false
     }
+
+    /// Adds the animated space before one slot of a reordered list and
+    /// returns its height.
+    fn reorder_gap(&mut self, id: Id, open: bool, height: f32) -> f32 {
+        let gap = self.ctx.animate(id, if open { height } else { 0.0 }, Tuning::SMOOTH).max(0.0);
+        if gap > 0.25 {
+            self.space(gap);
+        }
+        gap
+    }
+}
+
+/// Where a reordered list makes room for the dragged item.
+#[derive(Clone, Copy, Default)]
+struct ReorderState {
+    /// A drag over this list is running.
+    active: bool,
+    /// The slot among the other items that has the gap.
+    slot: usize,
+    /// Height of the gap: the dragged item and one spacing.
+    height: f32,
 }

@@ -271,7 +271,7 @@ fn board(ui: &mut Ui, b: &mut Board) {
 }
 
 fn tasks(ui: &mut Ui, list: &mut Vec<String>) {
-    // Drag items up and down to change the order.
+    // Drag items up and down to change the order. The others make room.
     ui.reorder("tasks", list, |ui, task| {
         ui.label(task);
     });

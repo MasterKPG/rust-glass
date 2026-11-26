@@ -3,7 +3,6 @@
 Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 
 ## In progress
-- [ ] Items of a reordered list make room for the dragged one, instead of a line marking the spot
 - [ ] Scroll a focused widget into view, also when a screen reader moves to it
 
 ## Next
@@ -20,6 +19,7 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Image tests against stored reference renders
 
 ## Done (recent)
+- [x] Reordered lists make room for the dragged item (2026-11-26)
 - [x] Menus, alerts and sheets blur their content while they form (2026-11-26)
 - [x] Nested masks combine, so a segmented control fades at the edge of a scroll area (2026-11-26)
 - [x] Shorter README, roadmap and guide (2026-11-26), guide examples checked by the doc tests

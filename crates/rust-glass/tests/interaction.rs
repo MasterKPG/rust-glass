@@ -560,6 +560,37 @@ fn reorder_moves_an_item_down() {
 }
 
 #[test]
+fn reorder_makes_room_for_the_dragged_item() {
+    let mut rig = Rig::new();
+    let mut items = vec![1, 2, 3, 4];
+    let tops = std::cell::RefCell::new(std::collections::HashMap::new());
+    let mut ui = |ctx: &mut Context| {
+        page(ctx, |ui| {
+            ui.reorder("list", &mut items, |ui, i| {
+                let r = ui.button(&format!("Item {i}")).rect;
+                tops.borrow_mut().insert(*i, r.min.y);
+            });
+        })
+    };
+    rig.idle(3, &mut ui);
+    let rest = tops.borrow().clone();
+    let start = vec2(100.0, rest[&1] + 10.0);
+    let end = vec2(100.0, rest[&3] + 30.0);
+    rig.frame(&[Event::PointerMoved(start)], &mut ui);
+    rig.frame(&[Event::PointerDown], &mut ui);
+    for i in 1..=20 {
+        rig.frame(&[Event::PointerMoved(start.lerp(end, i as f32 / 20.0))], &mut ui);
+    }
+    rig.idle(40, &mut ui);
+    let held = tops.borrow().clone();
+    // Items 2 and 3 move up into the place of item 1. Item 4 stays below
+    // the gap that opened for item 1.
+    assert!((held[&2] - rest[&1]).abs() < 1.0, "{held:?} {rest:?}");
+    assert!((held[&3] - rest[&2]).abs() < 1.0, "{held:?} {rest:?}");
+    assert!((held[&4] - rest[&4]).abs() < 1.0, "{held:?} {rest:?}");
+}
+
+#[test]
 fn undo_and_redo_in_a_text_field() {
     let mut rig = Rig::new();
     let mut s = String::new();
