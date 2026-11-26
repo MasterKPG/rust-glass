@@ -4,6 +4,8 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-26
+
 ### Added
 - `Gauge::thickness`, `Gauge::label_size` and `Gauge::label_padding`. The label of a gauge shrinks until it fits inside the ring with the padding to spare, so a word like "Battery" no longer touches it.
 - `ProgressBar::track` sets the color of the unfilled part.
@@ -107,7 +109,8 @@ First public release.
 - Menus stay attached to a button that scrolls or moves.
 - Springs no longer jump the last fraction of a point when they settle.
 
-[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/MasterKPG/rust-glass/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/MasterKPG/rust-glass/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/MasterKPG/rust-glass/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/MasterKPG/rust-glass/releases/tag/v0.1.0
