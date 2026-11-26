@@ -5,7 +5,7 @@ Short-term work. Long-term plan lives in [ROADMAP.md](ROADMAP.md).
 ## In progress
 - [x] Clear names and one module per widget
 - [x] API docs for every public item
-- [ ] Showcase that is easier to read
+- [x] Showcase that is easier to read
 - [ ] Shorter README and guide
 
 ## Next

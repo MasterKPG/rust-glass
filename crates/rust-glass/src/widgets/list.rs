@@ -56,15 +56,19 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
     before != *selected
 }
 
-/// Content card with a title, for grouping controls.
+/// Groups the widgets added in `f` on a card that starts with `title`.
+///
+/// The title is inside the card, so it stays readable over any wallpaper.
 pub fn section(ui: &mut Ui, title: &str, f: impl FnOnce(&mut Ui)) {
-    let c = ui.surface.secondary_color();
-    let st = TextStyle::new(13.0).weight(Weight::Semibold);
-    ui.styled_text(title, st, c);
-    ui.card(f);
+    ui.card(|ui| {
+        let style = TextStyle::new(ui.ctx.theme.body_size + 1.0).weight(Weight::Semibold);
+        let color = ui.surface.text_color();
+        ui.styled_text(title, style, color);
+        f(ui);
+    });
 }
 
-/// Two column table with a header row.
+/// A table with a header row. Columns share the width equally.
 pub fn table(ui: &mut Ui, header: &[&str], rows: &[Vec<String>]) {
     let n = header.len().max(1);
     let w = ui.available_width() / n as f32;

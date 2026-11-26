@@ -508,7 +508,7 @@ const ICE: Material = Material { blur: 1.5, refraction: 30.0, depth: 22.0, ..Mat
 
 fn toolbar(ctx: &mut Context) {
     let r = rect(40.0, 40.0, 300.0, 60.0);
-    Panel::new("bar", r).corner(Corner::Capsule).material(ICE).flips().show(ctx, |ui| {
+    Panel::new("bar", r).corner(Corner::Capsule).material(ICE).adaptive().show(ctx, |ui| {
         ui.label("Over a photo");
     });
 
@@ -533,7 +533,7 @@ Parameters that change the look the most:
 - `shadow`, `shadow_radius`, `shadow_tint`: the shadow, and how much color it carries.
 - `frosts`: how much the `frost` setting applies. Set it to 0 for a lens that sits above its own label, or the label turns milky.
 
-`.flips()` lets a panel switch between light and dark with its backdrop. Keep that for small panels.
+`.adaptive()` lets a panel switch between light and dark with its backdrop. Keep that for small panels.
 
 ## Custom painting and your own widgets
 

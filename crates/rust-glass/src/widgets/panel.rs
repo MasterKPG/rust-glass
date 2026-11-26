@@ -12,7 +12,7 @@ pub struct Panel {
     corner: Corner,
     material: Option<Material>,
     pad: f32,
-    flips: bool,
+    adaptive: bool,
     order: Order,
 }
 
@@ -25,7 +25,7 @@ impl Panel {
             corner: Corner::Radius(28.0),
             material: None,
             pad: 14.0,
-            flips: false,
+            adaptive: false,
             order: Order::Bar,
         }
     }
@@ -44,9 +44,10 @@ impl Panel {
         self.pad = padding;
         self
     }
-    /// Small panels may switch between light and dark.
-    pub fn flips(mut self) -> Self {
-        self.flips = true;
+    /// Lets the panel switch between light and dark with what is behind it.
+    /// Use it for small panels.
+    pub fn adaptive(mut self) -> Self {
+        self.adaptive = true;
         self
     }
     /// Sets the layer order. The default is [`Order::Bar`].
@@ -62,7 +63,7 @@ impl Panel {
         ctx.interact(self.id.with("block"), self.rect, Rect::EVERYTHING, layer, Sense::Hover);
         let m = self.material.unwrap_or(ctx.theme.thick);
         let mut g = Glass::new(self.rect, self.corner, m);
-        let a = ctx.prepare_glass(self.id, &mut g, self.flips);
+        let a = ctx.prepare_glass(self.id, &mut g, self.adaptive);
         ctx.painter(layer, Rect::EVERYTHING).glass(&g);
         let mut ui = Ui::new(ctx, layer, self.id, self.rect.shrink(self.pad));
         ui.surface = a.surface();

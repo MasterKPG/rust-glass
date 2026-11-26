@@ -477,7 +477,7 @@ impl<'a> Ui<'a> {
         let h = self.size_of(id.with("card")).y;
         let r = Rect::from_min_size(start, vec2(w, h));
         let fill =
-            if self.surface.darkness() > 0.5 { Color::gray(0.13).alpha(0.82) } else { Color::white(0.80) };
+            if self.surface.darkness() > 0.5 { Color::gray(0.13).alpha(0.88) } else { Color::white(0.86) };
         self.painter().fill(r, 20.0, fill);
         let max = Rect { min: start + vec2(18.0, 16.0), max: vec2(start.x + w - 18.0, self.max_rect.max.y) };
         let mut ui = self.sub(id, max, Dir::Vertical);
