@@ -1,6 +1,6 @@
 use rust_glass::prelude::*;
 
-use super::{Marks, hint};
+use super::{Marks, hint, section};
 
 const TABS: [(Icon, &str); 5] = [
     (Icon::Home, "Home"),

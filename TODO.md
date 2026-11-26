@@ -17,6 +17,7 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Image tests against stored reference renders
 
 ## Done (recent)
+- [x] Content blur during transitions: overlays, showcase pages and the album view (2026-11-26)
 - [x] Elements morph from one view into another with `Context::morph` (2026-11-26)
 - [x] Focus from the keyboard or a screen reader scrolls the widget into view (2026-11-26)
 - [x] Reordered lists make room for the dragged item (2026-11-26)

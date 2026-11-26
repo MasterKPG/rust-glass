@@ -24,7 +24,7 @@ Goal: an API that reads well, and transitions that keep glass on one continuous 
 - Clear names, one module per widget, API docs for every item (done on dev)
 - A showcase that is easy to read (done on dev)
 - Elements that morph from one view into another (done on dev)
-- Content blur during transitions
+- Content blur during transitions (done on dev)
 - Touch gestures with momentum, and tilt from device sensors
 - Screen readers checked with VoiceOver and Orca
 

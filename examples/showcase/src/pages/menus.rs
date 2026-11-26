@@ -1,6 +1,6 @@
 use rust_glass::prelude::*;
 
-use super::{Marks, hint};
+use super::{Marks, hint, section};
 
 pub struct State {
     sort_by_date: bool,

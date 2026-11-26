@@ -1,5 +1,7 @@
 use rust_glass::prelude::*;
 
+use super::section;
+
 pub struct State {
     airplane_mode: bool,
     wifi: bool,

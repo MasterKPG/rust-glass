@@ -185,6 +185,18 @@ fn page_title(ui: &mut Ui, title: &str) {
     painter.text(rect.min, &layout, color);
 }
 
+/// Blur of a page's content when it starts to appear, in points.
+const APPEAR_BLUR: f32 = 8.0;
+
+/// A titled card, like [`rust_glass::prelude::section`], that comes into
+/// focus while its page appears. The page sets the opacity of the `Ui` as it
+/// appears, and the blur follows it.
+fn section(ui: &mut Ui, title: &str, f: impl FnOnce(&mut Ui)) {
+    let appear = ui.opacity;
+    let (_, rect) = ui.scope(|ui| rust_glass::prelude::section(ui, title, f));
+    ui.painter().blur(rect, 20.0, APPEAR_BLUR * (1.0 - appear));
+}
+
 /// A short explanation under a section title.
 fn hint(ui: &mut Ui, text: &str) {
     let style = TextStyle::new(ui.ctx.theme.body_size - 1.0);

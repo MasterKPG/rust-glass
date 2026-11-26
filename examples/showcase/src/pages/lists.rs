@@ -1,7 +1,7 @@
 use rust_glass::accessibility::Role;
 use rust_glass::prelude::*;
 
-use super::{Marks, hint};
+use super::{Marks, hint, section};
 
 const TILES: [(&str, Color, Color); 8] = [
     ("Coast", Color::TEAL, Color::BLUE),

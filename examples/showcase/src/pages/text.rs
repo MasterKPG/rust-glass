@@ -1,6 +1,6 @@
 use rust_glass::prelude::*;
 
-use super::hint;
+use super::{hint, section};
 
 pub struct State {
     query: String,

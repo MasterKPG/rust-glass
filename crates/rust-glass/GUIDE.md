@@ -576,7 +576,7 @@ fn rate(ui: &mut Ui, rating: &mut usize) {
 }
 ```
 
-The painter has `fill`, `gradient`, `stroke`, `shadow`, `line`, `arc`, `image`, `icon`, `text`, `text_centered` and `glass`. `ui.surface` gives the text and fill colors that fit what the widget is drawn on.
+The painter has `fill`, `gradient`, `stroke`, `shadow`, `line`, `arc`, `image`, `icon`, `text`, `text_centered`, `glass` and `blur`. `blur` softens what is already painted in a rectangle, for content that comes into focus as it appears. `ui.surface` gives the text and fill colors that fit what the widget is drawn on.
 
 For a glass element of your own, `ui.glass` measures the backdrop and returns the surface to pick the label color from:
 

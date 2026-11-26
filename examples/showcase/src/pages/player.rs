@@ -86,6 +86,9 @@ pub fn show(state: &mut State, marks: &mut Marks, covers: &[ImageId], ctx: &mut 
             });
             marks.set("player content", rect);
         });
+        // The list and the album page come into focus as they appear. The
+        // flying cover is on a layer of its own and stays sharp.
+        ui.painter().blur(sheet.shrink(1.0), 25.0, 8.0 * (1.0 - appear));
         if state.album != before {
             state.appear = Spring::new(0.0);
         }

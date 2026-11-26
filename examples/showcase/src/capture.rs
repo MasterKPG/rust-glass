@@ -151,6 +151,12 @@ pub fn pages(dir: &str) -> Result<(), String> {
 
     let shot = |rig: &mut Rig, name: &str| rig.save(&format!("{dir}/shot_{name}.png"));
 
+    // A page coming into focus right after switching to it.
+    rig.open(Page::Buttons, PETALS);
+    rig.app.page = Page::Feedback;
+    rig.wait(6);
+    shot(&mut rig, "page_appear")?;
+
     rig.open(Page::Buttons, PETALS);
     rig.press(rig.mark("regular button"));
     rig.wait(30);

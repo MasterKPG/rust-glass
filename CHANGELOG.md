@@ -5,6 +5,7 @@ All notable changes are listed here. Format: Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- Pages of the showcase come into focus as they appear, using `Painter::blur`.
 - `Context::morph` moves an element from the view that showed it to the view that shows it now. In the showcase, album covers grow from the grid into a detail view and back.
 - Scroll areas scroll to show a widget that gets focus from the keyboard or a screen reader.
 - The items of a reorderable list move apart to make room for the dragged item, where a line used to mark the spot.
