@@ -5,6 +5,7 @@ All notable changes are listed here. Format: Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- Scroll areas scroll to show a widget that gets focus from the keyboard or a screen reader.
 - The items of a reorderable list move apart to make room for the dragged item, where a line used to mark the spot.
 - `Painter::blur` blurs what is already painted in a rectangle, and `Material::blur` is the glass behind it.
 - Menus, popups, alerts and sheets bring their content into focus as they form, instead of only fading it in.

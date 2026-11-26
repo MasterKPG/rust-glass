@@ -629,7 +629,7 @@ Call `ctx.request_repaint()` in every frame while something else moves, such as 
 
 ## Keyboard, clipboard and links
 
-Tab and Shift+Tab move the focus. Space and Enter press, arrow keys move sliders, segments and tabs.
+Tab and Shift+Tab move the focus, and scroll areas scroll to show the focused widget. Space and Enter press, arrow keys move sliders, segments and tabs.
 
 ```rust
 use rust_glass::input::Key;

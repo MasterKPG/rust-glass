@@ -590,6 +590,52 @@ fn reorder_makes_room_for_the_dragged_item() {
     assert!((held[&4] - rest[&4]).abs() < 1.0, "{held:?} {rest:?}");
 }
 
+/// Twenty buttons in a scroll area 200 points high. Returns the rectangle
+/// of every button in the last frame.
+fn scrolled_buttons(rig: &mut Rig, events: &[Event]) -> Vec<Rect> {
+    let rects = std::cell::RefCell::new(Vec::new());
+    let mut ui = |ctx: &mut Context| {
+        page(ctx, |ui| {
+            rects.borrow_mut().clear();
+            ScrollArea::new().height(200.0).show(ui, |ui| {
+                for i in 0..20 {
+                    let r = ui.button(&format!("Button {i}")).rect;
+                    rects.borrow_mut().push(r);
+                }
+            });
+        })
+    };
+    rig.frame(events, &mut ui);
+    rig.idle(60, &mut ui);
+    rects.into_inner()
+}
+
+#[test]
+fn tab_scrolls_the_focused_widget_into_view() {
+    let mut rig = Rig::new();
+    let view = rect(50.0, 50.0, 600.0, 200.0);
+    let rest = scrolled_buttons(&mut rig, &[]);
+    assert!(rest[14].min.y > view.max.y, "button 14 starts out of view");
+    let mut rects = rest;
+    for _ in 0..15 {
+        rects = scrolled_buttons(&mut rig, &[Event::Key(Key::Tab)]);
+    }
+    assert!(rects[14].min.y >= view.min.y && rects[14].max.y <= view.max.y, "{:?}", rects[14]);
+}
+
+#[test]
+fn screen_reader_focus_scrolls_into_view() {
+    let mut rig = Rig::new();
+    let view = rect(50.0, 50.0, 600.0, 200.0);
+    rig.ctx.set_accessibility(true);
+    scrolled_buttons(&mut rig, &[]);
+    let target =
+        rig.ctx.access_nodes().iter().find(|n| n.label == "Button 17").map(|n| n.id).expect("button 17");
+    let rects =
+        scrolled_buttons(&mut rig, &[Event::Access(target, rust_glass::accessibility::Action::Focus)]);
+    assert!(rects[17].min.y >= view.min.y && rects[17].max.y <= view.max.y, "{:?}", rects[17]);
+}
+
 #[test]
 fn undo_and_redo_in_a_text_field() {
     let mut rig = Rig::new();

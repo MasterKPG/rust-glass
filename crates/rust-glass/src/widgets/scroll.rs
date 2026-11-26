@@ -219,6 +219,7 @@ impl ScrollArea {
         }
         let min = vec2(view.min.x - shown[0], view.min.y - shown[1] + self.inset_top);
         let visible = Rect::from_min_size(vec2(off[0], off[1]), view.size());
+        let revealing = ui.ctx.reveal.is_some() && ui.ctx.reveal_rect.is_none();
         let (out, used) = if self.x && !self.y {
             let body = Rect { min, max: vec2(min.x + 1.0e5, view.max.y - self.inset_bottom) };
             ui.row_sized(id, body, |ui| f(ui, visible))
@@ -229,6 +230,31 @@ impl ScrollArea {
         };
         ui.clip = old_clip;
         ui.mask = old_mask;
+        // A widget inside got focus from the keyboard or a screen reader:
+        // scroll just far enough to show it.
+        if revealing && let Some(target) = ui.ctx.reveal_rect {
+            const MARGIN: f32 = 12.0;
+            let shown = [
+                (view.min.x + MARGIN, view.max.x - MARGIN),
+                (view.min.y + self.inset_top + MARGIN, view.max.y - self.inset_bottom - MARGIN),
+            ];
+            let wanted = [(target.min.x, target.max.x), (target.min.y, target.max.y)];
+            for a in 0..2 {
+                let ((start, end), (low, high)) = (shown[a], wanted[a]);
+                let shift = if low < start {
+                    low - start
+                } else if high > end {
+                    (high - end).min(low - start)
+                } else {
+                    0.0
+                };
+                if on[a] && shift != 0.0 {
+                    s.axes[a].target = (s.axes[a].target + shift).clamp(0.0, max[a]);
+                    s.last_move = ui.ctx.time;
+                    ui.ctx.request_repaint();
+                }
+            }
+        }
         let content = [used.x, used.y + self.inset_top + self.inset_bottom];
         for a in 0..2 {
             if on[a] && (content[a] - s.axes[a].content).abs() > 0.5 {

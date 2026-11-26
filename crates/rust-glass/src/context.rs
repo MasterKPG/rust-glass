@@ -249,6 +249,11 @@ pub struct Context {
     focus_by_key: bool,
     focus_list: Vec<Id>,
     focus_seen: bool,
+    /// A widget that got focus from the keyboard or a screen reader and should
+    /// be scrolled into view, with the frames left to find it.
+    pub(crate) reveal: Option<(Id, u8)>,
+    /// Where that widget was drawn this frame.
+    pub(crate) reveal_rect: Option<Rect>,
     adapt: HashMap<u64, Adapt>,
     repaint: bool,
     relayout: bool,
@@ -309,6 +314,8 @@ impl Context {
             focus_by_key: false,
             focus_list: Vec::new(),
             focus_seen: false,
+            reveal: None,
+            reveal_rect: None,
             adapt: HashMap::new(),
             repaint: false,
             relayout: false,
@@ -339,6 +346,7 @@ impl Context {
         self.repaint = false;
         self.relayout = false;
         self.ime_area = None;
+        self.reveal_rect = None;
         self.input.begin(events, time);
         self.access.nodes.clear();
         self.access.requests.clear();
@@ -435,6 +443,12 @@ impl Context {
     /// Ends the frame and builds the draw list. The window host and
     /// [`Headless`](crate::headless::Headless) call it for you.
     pub fn end_frame(&mut self) {
+        // A focused widget is revealed once. Give up on one that is not drawn.
+        self.reveal = match self.reveal {
+            Some(_) if self.reveal_rect.is_some() => None,
+            Some((id, frames)) if frames > 0 => Some((id, frames - 1)),
+            _ => None,
+        };
         crate::widgets::toast::show_toasts(self);
         if self.input.released || !self.input.down {
             self.active = None;
@@ -618,6 +632,9 @@ impl Context {
     /// Parts outside `clip` do not react. Only the topmost widget under the
     /// pointer is hovered.
     pub fn interact(&mut self, id: Id, rect: Rect, clip: Rect, layer: usize, sense: Sense) -> Response {
+        if self.reveal.is_some_and(|(wanted, _)| wanted == id) {
+            self.reveal_rect = Some(rect);
+        }
         let visible = rect.intersect(clip);
         if visible.is_positive() {
             self.hits.push(Hit { id, rect: visible, layer, sense, scroll: 0 });
@@ -683,6 +700,7 @@ impl Context {
         };
         self.focus = Some(self.focus_list[next as usize]);
         self.focus_by_key = true;
+        self.reveal = self.focus.map(|id| (id, 3));
     }
 
     /// Registers a scroll area and returns the wheel movement it receives, on
@@ -870,6 +888,7 @@ impl Context {
             Action::Focus => {
                 self.focus = Some(id);
                 self.focus_by_key = true;
+                self.reveal = Some((id, 3));
             }
             Action::Blur => {
                 if self.focus == Some(id) {
