@@ -94,7 +94,7 @@ fn counter(ui: &mut Ui, n: &mut i32) {
 
 The fields of `Options` are `title`, `size` and `min_size` in points, `vsync`, and `low_power`, which prefers the integrated GPU on machines with two.
 
-`FrameInfo` holds timings of recent frames (`ui_ms`, `encode_ms`, `gpu.gpu_ms`, `interval_ms`) in case you want to show them.
+`FrameInfo` holds timings of recent frames (`ui_ms`, `encode_ms`, `gpu`, `interval_ms`) in case you want to show them. `gpu.gpu_ms` is `None` where the GPU cannot measure time.
 
 All lengths are in points. `ctx.screen` is the window, `ctx.pixels_per_point` the number of pixels per point.
 
@@ -185,6 +185,7 @@ fn layout(ui: &mut Ui) {
 
     ui.padded(vec2(20.0, 10.0), |ui| ui.label("Inset"));
     ui.card(|ui| ui.label("On a card"));
+    section(ui, "Title", |ui| ui.label("On a card under a title"));
     ui.space(12.0);
     ui.separator();
 
@@ -436,7 +437,7 @@ fn overlays(ctx: &mut Context, o: &mut Overlays) {
 
 ## Images and wallpaper
 
-`ctx.add_image(width, height, rgba)` uploads 8 bit RGBA pixels and returns an `ImageId`. Uploads stay in GPU memory until the window closes, so upload each image once, for example in `setup`. rust-glass does not decode files. The `image` crate does.
+`ctx.add_image(width, height, rgba)` uploads 8 bit RGBA pixels and returns an `ImageId`. Upload each image once, for example in `setup`, and free it with `ctx.remove_image(id)` when it is no longer needed. rust-glass does not decode files. The `image` crate does.
 
 ```rust
 use rust_glass::prelude::*;
@@ -484,14 +485,14 @@ fn configure(ctx: &mut Context) {
 | --- | --- | --- |
 | `dark` | `false` | Dark content. Small glass elements decide for themselves from what is behind them. |
 | `accent` | `Color::BLUE` | Prominent buttons, links, focus rings. |
-| `frost` | `0.35` | 0 is the clearest glass, 1 is fully tinted. Also sets how clear the lifted lenses are. |
+| `glass_tint` | `0.35` | 0 is the clearest glass, 1 is fully tinted. Also sets how clear the lifted lenses are. |
 | `adaptive` | `true` | Small glass switches between light and dark with its backdrop. |
 | `reduce_transparency` | `false` | Denser surfaces. |
 | `reduce_motion` | `false` | No overshoot. |
 | `increase_contrast` | `false` | Stronger edges. |
 | `regular`, `clear`, `thick`, `lens`, `blob`, `blob_labels` | presets | Materials used by the widgets. |
 | `control_height`, `spacing` | `36`, `10` | Sizes in points. |
-| `body`, `caption`, `title` | `14`, `12`, `24` | Font sizes. |
+| `body_size`, `caption_size`, `title_size` | `14`, `12`, `24` | Font sizes. |
 
 Text uses the interface font of the platform. `ctx.text.add_font(bytes)` registers a font file, and `ctx.text.sans = "Family".into()` switches to it.
 
@@ -531,7 +532,7 @@ Parameters that change the look the most:
 - `light_range` and `dark_range`: the brightness range the backdrop is squeezed into. A narrow range near white keeps dark text legible over anything.
 - `rim`, `dark_edge`, `inner_glow`: light on the edge.
 - `shadow`, `shadow_radius`, `shadow_tint`: the shadow, and how much color it carries.
-- `frosts`: how much the `frost` setting applies. Set it to 0 for a lens that sits above its own label, or the label turns milky.
+- `glass_tint_response`: how much the `glass_tint` setting applies. Set it to 0 for a lens that sits above its own label, or the label turns milky.
 
 `.adaptive()` lets a panel switch between light and dark with its backdrop. Keep that for small panels.
 
@@ -620,7 +621,7 @@ fn bar(ui: &mut Ui, open: bool) {
 }
 ```
 
-Tunings: `SNAP` (no overshoot), `SMOOTH`, `GEL` and `BOUNCY`, or `Tuning::new(response, damping)`, with the same meaning as a SwiftUI spring.
+Tunings: `SNAP` (no overshoot), `SMOOTH`, `PRESS` and `BOUNCY`, or `Tuning::new(response, damping)`, with the same meaning as a SwiftUI spring.
 
 Call `ctx.request_repaint()` in every frame while something else moves, such as a video or a timer. `ctx.dt` is the time since the last frame in seconds and `ctx.time` the time since start. Nothing can wake an idle window from another thread yet. While a background job runs, request a repaint and poll its channel in `update`.
 
@@ -648,6 +649,7 @@ fn links(ui: &mut Ui) {
 }
 
 fn quit(ctx: &mut Context) {
+    // Handled by the window after this frame.
     ctx.host_commands.push(rust_glass::context::HostCommand::Close);
 }
 ```
@@ -660,7 +662,9 @@ Input methods for Chinese, Japanese, Korean and other scripts work in every text
 
 ## Accessibility
 
-Screen readers (Narrator, NVDA and JAWS on Windows, VoiceOver on macOS, Orca on Linux) see every built in widget with its role, name, value and state, and can operate it: press buttons, flip switches, move sliders, pick tabs and segments, and set the text of fields. The tree goes to the platform through [AccessKit](https://accesskit.dev). It is built only while a screen reader listens, so an app without one pays nothing.
+Screen readers see every built in widget with its role, name, value and state, and can operate it: press buttons, flip switches, move sliders, pick tabs and segments, and set the text of fields. The tree goes to the platform through [AccessKit](https://accesskit.dev). It is built only while a screen reader listens, so an app without one pays nothing.
+
+It has been checked with Windows UI Automation. VoiceOver on macOS and Orca on Linux have not been tried yet.
 
 Widgets without text of their own, such as a slider, need a name:
 
@@ -673,7 +677,7 @@ fn volume(ui: &mut Ui, v: &mut f32) {
 }
 ```
 
-`Row` names the controls at its end after its title, so a settings list needs nothing extra. Your own widgets describe themselves with `ui.access`, which returns `None` while no screen reader listens:
+`SettingsRow` names the controls at its end after its title, so a settings list needs nothing extra. Your own widgets describe themselves with `ui.access`, which returns `None` while no screen reader listens:
 
 ```rust
 use rust_glass::accessibility::Role;

@@ -1,18 +1,14 @@
 # rust-glass
 
-A GPU rendered UI framework for Rust in the style of Apple's Liquid Glass. Controls bend, blur and color the pixels behind them in real time, including other controls. The API is immediate mode and will look familiar if you know egui.
-
-Read the [guide](https://github.com/MasterKPG/rust-glass/blob/main/crates/rust-glass/GUIDE.md) to build an app with it.
+A Rust UI framework that draws controls in the style of Apple's Liquid Glass on the GPU. Glass bends, blurs and tints whatever is behind it, including other glass. The API is immediate mode, like egui.
 
 ![Material lab with a clear lens over ribbons](https://raw.githubusercontent.com/MasterKPG/rust-glass/main/preview/lab-clear.jpg)
 
-![Material lab with a thick lens over ribbons](https://raw.githubusercontent.com/MasterKPG/rust-glass/main/preview/lab-lens.jpg)
-
-The selection of a tab bar lifts into a clear blob:
+The tab bar selection lifts into a clear blob while you drag it:
 
 ![Dragging the tab bar selection](https://raw.githubusercontent.com/MasterKPG/rust-glass/main/preview/tabs.gif)
 
-The thumb of a slider lifts into a lens and changes shape with acceleration:
+The slider thumb turns into a lens and stretches with the motion:
 
 ![Dragging a slider](https://raw.githubusercontent.com/MasterKPG/rust-glass/main/preview/slider.gif)
 
@@ -20,38 +16,34 @@ The + button splits into drops that pull apart and fuse again:
 
 ![The + button splitting into drops](https://raw.githubusercontent.com/MasterKPG/rust-glass/main/preview/split.gif)
 
-More pictures are in the [preview](https://github.com/MasterKPG/rust-glass/tree/main/preview) folder: [player](https://github.com/MasterKPG/rust-glass/blob/main/preview/player.jpg), [dark player](https://github.com/MasterKPG/rust-glass/blob/main/preview/player-dark.jpg), [buttons](https://github.com/MasterKPG/rust-glass/blob/main/preview/buttons.jpg), [sliders and switches](https://github.com/MasterKPG/rust-glass/blob/main/preview/sliders.jpg), [segments and tabs](https://github.com/MasterKPG/rust-glass/blob/main/preview/segments.jpg), [text fields](https://github.com/MasterKPG/rust-glass/blob/main/preview/fields.jpg), [menus](https://github.com/MasterKPG/rust-glass/blob/main/preview/menu.jpg), [feedback](https://github.com/MasterKPG/rust-glass/blob/main/preview/feedback.jpg), [windows](https://github.com/MasterKPG/rust-glass/blob/main/preview/windows.jpg), [settings](https://github.com/MasterKPG/rust-glass/blob/main/preview/settings.jpg), and the lab on [regular](https://github.com/MasterKPG/rust-glass/blob/main/preview/lab-regular.jpg) and [thick](https://github.com/MasterKPG/rust-glass/blob/main/preview/lab-thick.jpg) glass and over a [test grid](https://github.com/MasterKPG/rust-glass/blob/main/preview/lab-grid.jpg).
+More pictures are in the [preview folder](https://github.com/MasterKPG/rust-glass/tree/main/preview).
 
 ## Features
 
-- Lens with refraction, chromatic dispersion and edge mirroring, computed from a signed distance field per pixel
-- Specular rim, dark edge, inner glow and a shadow that carries the color of the light passing through
-- Small glass elements measure their backdrop on the GPU and switch between light and dark with hysteresis
-- Shapes in one element fuse like drops of liquid
-- Every motion is a closed form spring: interruptible and independent of the frame rate
-- Press response that swells and stretches towards the finger
-- Slider, switch and tab bar thumbs lift into lenses whose shape follows acceleration
-- A transparency setting from ultra clear to tinted that also controls how clear the lifted lenses are, plus reduced transparency, reduced motion and increased contrast
-- Keyboard focus and operation for the interactive controls
-- Screen readers see every built in widget with its role, name and state, and can operate it, through [AccessKit](https://accesskit.dev). The tree is built only while one listens
-- Scrolling on one or two axes, and lists of any length that lay out only the rows in view
-- Drag and drop with payloads of any type, and lists that reorder by dragging
-- Text fields with undo and redo, and input method composition shown at the caret
-- Draws only on change. An idle window uses no CPU
+- Refraction, color dispersion, blur, rim light and a shadow that takes the color of the light passing through
+- Small glass elements measure what is behind them and switch between light and dark
+- Shapes of one element fuse like drops of liquid
+- All motion runs on springs, so it can be interrupted at any time and looks the same at any frame rate
+- Settings for glass tint, reduced transparency, reduced motion and increased contrast
+- Keyboard focus, and screen reader support through [AccessKit](https://accesskit.dev)
+- Scrolling on one or two axes, and lists of any length that only lay out the visible rows
+- Drag and drop, and lists that reorder by dragging
+- Text fields with undo, redo and input method support
+- Draws only when something changes. An idle window uses no CPU
 
-Components: button (regular, prominent, tinted, clear, plain, icon, group, splitting), slider, stepper, drag value, switch, checkbox, radio, segmented control, tab bar, text field, search field, password field, multi line editor, menu, combo box, context menu, color picker, progress bar, gauge, spinner, tooltip, toast, alert, modal, sheet, window, panel, navigation list, scroll area (vertical, horizontal, both, virtualized rows), drag source, drop zone, reorderable list, collapsing section, settings row, table, card, image, link.
+Widgets: buttons, button groups, split button, slider, stepper, drag value, switch, checkbox, radio button, segmented control, tab bar, text fields, menus, combo box, context menu, color picker, progress bar, gauge, spinner, tooltip, toast, alert, modal, sheet, window, panel, navigation list, settings row, scroll area, drag source, drop zone, reorderable list, collapsing section, table, card, image and link.
 
 ## Install
 
-Needs Rust 1.90 or newer and a GPU with Vulkan, DirectX 12 or Metal.
+You need Rust 1.90 or newer and a GPU with Vulkan, DirectX 12 or Metal.
 
 ```bash
 cargo add rust-glass
 ```
 
-The API docs are on [docs.rs](https://docs.rs/rust-glass). For the version in development, use `cargo add rust-glass --git https://github.com/MasterKPG/rust-glass --branch dev`.
+To try the version in development: `cargo add rust-glass --git https://github.com/MasterKPG/rust-glass --branch dev`.
 
-## Usage
+## Example
 
 ```rust
 use rust_glass::prelude::*;
@@ -63,7 +55,7 @@ struct Hello {
 
 impl App for Hello {
     fn update(&mut self, ctx: &mut Context, _: &FrameInfo) {
-        // Something colorful for the glass to bend.
+        // Glass needs something behind it to bend.
         let screen = ctx.screen;
         ctx.background().gradient(screen.expand(64.0), 0.0, Color::INDIGO, Color::ORANGE, vec2(0.5, 0.5));
 
@@ -84,13 +76,11 @@ fn main() -> Result<(), String> {
 }
 ```
 
-Glass belongs on floating controls and bars. Put it above images or scrolling content to see it work. A button placed on a glass panel draws as a fill, because glass on glass muddies both.
+The [guide](https://github.com/MasterKPG/rust-glass/blob/main/crates/rust-glass/GUIDE.md) explains layout, every widget, menus and dialogs, images, theming, materials, your own widgets, animation and testing. The API reference is on [docs.rs](https://docs.rs/rust-glass).
 
-The [guide](https://github.com/MasterKPG/rust-glass/blob/main/crates/rust-glass/GUIDE.md) covers layout, every widget, menus and dialogs, images, theming, materials, custom widgets, animation, testing and common problems.
+## Showcase
 
-## Run the showcase
-
-Every component on one screen, with a live material editor.
+The showcase has a page for every group of widgets and a lab to edit the glass material live.
 
 ```bash
 git clone https://github.com/MasterKPG/rust-glass
@@ -98,57 +88,32 @@ cd rust-glass
 cargo run --release -p showcase
 ```
 
-Drop an image file on the window to use it as wallpaper. Render all pages to PNG without a window, with timings:
+Drop an image on the window to use it as the wallpaper. To render every page to PNG without a window and print timings, run `cargo run --release -p showcase -- --capture captures`.
 
-```bash
-cargo run --release -p showcase -- --capture captures
-```
+## How the glass is drawn
 
-`--preview DIR` renders the pictures of the preview folder the same way. Run the tests with `cargo test --workspace`.
+1. The scene is drawn into a texture. Before a pass with glass, the area behind the glass is copied and scaled down into a chain of smaller copies for blurring.
+2. A shader computes the distance to the outline of each glass shape. Near the outline it samples the backdrop further inwards, along the curve of a rounded bevel. Red bends a little more than blue.
+3. Blur mixes two levels of the scaled copies, so its radius can animate smoothly.
+4. Rim light, edge, glow and shadow come from the same distance.
+5. Draws that do not overlap share a pass. A page with 28 glass elements needs 3 passes.
 
-## How the glass works
-
-1. The scene is drawn into an offscreen texture. Before a pass with glass, the region behind it is copied and reduced into a mip chain.
-2. The glass shader evaluates a superellipse distance field. Near the outline, samples move inwards along the normal with the profile of a quarter circle bevel, and red moves further than blue.
-3. Blur is a bicubic lookup between two mip levels, so its radius can animate. The result is remapped to a light or dark range and tinted.
-4. Rim, dark edge, inner glow and shadow come from the same distance and normal.
-5. Draw commands that do not overlap move to the earliest possible pass. A page with 28 glass elements takes 3 passes.
-
-egui was the first choice of base. It paints in one render pass, so a widget cannot read the pixels of widgets below it, and existing egui glass refracts a pre-registered image instead. That is why this is a separate framework.
+egui was the first choice as a base, but it paints everything in one pass, so a widget cannot see the widgets below it. That is why rust-glass is its own framework.
 
 ## Performance
 
-Measured with `--capture` at 1770 x 1170 on an Intel UHD integrated GPU (i5-1345U, Vulkan), release build: 0.2 to 0.4 ms of UI code and 3 to 6 ms of GPU time per frame, depending on the page. The first frame is drawn about 0.3 s after start, including loading the system fonts.
+On an Intel UHD integrated GPU (i5-1345U, Vulkan) at 1770 by 1170 pixels, a frame takes 0.2 to 0.4 ms of UI code and 3 to 6 ms on the GPU, depending on the page. The first frame shows about 0.3 seconds after start.
 
-## Project structure
+## Platforms
 
-```text
-crates/rust-glass/GUIDE.md
-crates/rust-glass/src
-  gpu/         renderer and WGSL shaders
-  material.rs  glass parameters and presets
-  paint.rs     draw lists
-  ui.rs        layout
-  context.rs   input routing, animation memory, backdrop measurements
-  access.rs    accessibility tree for screen readers
-  widgets/     components
-examples/showcase
-scripts/       versioning for the release workflow
-preview/       pictures of the showcase
-```
+- Windows: tested by hand on Vulkan and DirectX 12.
+- macOS (Metal) and Linux (Vulkan): every push runs the tests and renders every page in CI. The renders match Windows except for the text, which uses each platform's own font.
+- Screen readers: tested with Windows UI Automation. VoiceOver and Orca have not been tried yet.
 
-## Releases
-
-Work happens on the dev branch, where every push is tested. Merging dev into main makes a release: if the crate or this README changed, main is tested, versioned and published by a [workflow](https://github.com/MasterKPG/rust-glass/blob/main/.github/workflows/release.yml). Breaking changes, found by cargo-semver-checks, raise the minor version and everything else the patch. The workflow commits the new version, turns the Unreleased section of the [changelog](https://github.com/MasterKPG/rust-glass/blob/main/CHANGELOG.md) into the release notes, publishes to [crates.io](https://crates.io/crates/rust-glass), creates a [GitHub release](https://github.com/MasterKPG/rust-glass/releases) and brings dev up to date. To choose a version by hand, set it in `Cargo.toml` and name the changelog section after it.
-
-## Status
-
-Early. Windows is tested by hand on Vulkan and DirectX 12, which render alike. Every push to dev also runs the tests and renders every page on macOS (Metal) and on Linux (Vulkan, through the Mesa software driver). See [ROADMAP.md](https://github.com/MasterKPG/rust-glass/blob/main/ROADMAP.md) and [TODO.md](https://github.com/MasterKPG/rust-glass/blob/main/TODO.md).
-
-Contributions are not open.
+The project is early. Plans are in [ROADMAP.md](https://github.com/MasterKPG/rust-glass/blob/main/ROADMAP.md). Contributions are not open.
 
 ## License
 
-Licensed under either of [Apache License 2.0](https://github.com/MasterKPG/rust-glass/blob/main/LICENSE-APACHE) or [MIT](https://github.com/MasterKPG/rust-glass/blob/main/LICENSE-MIT), at your option.
+MIT or Apache-2.0, at your option: [LICENSE-MIT](https://github.com/MasterKPG/rust-glass/blob/main/LICENSE-MIT), [LICENSE-APACHE](https://github.com/MasterKPG/rust-glass/blob/main/LICENSE-APACHE).
 
-rust-glass is an independent project and not affiliated with Apple. It contains no Apple code, fonts, icons or images.
+rust-glass is an independent project, not affiliated with Apple. It contains no Apple code, fonts, icons or images.
