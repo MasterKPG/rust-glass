@@ -4,6 +4,8 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
 ### Added
 - Accessibility through AccessKit. Screen readers see every built in widget with its role, name, value and state, and can press buttons, flip switches, move sliders and steppers, pick tabs and segments and set the text of fields. The tree is built only while a screen reader listens. `Ui::access` describes your own widgets and `Context::access_label` names controls without text.
 - Rows of a settings list give their title to the switch, slider or stepper at their end.
@@ -60,6 +62,7 @@ First public release.
 - Menus stay attached to a button that scrolls or moves.
 - Springs no longer jump the last fraction of a point when they settle.
 
-[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/MasterKPG/rust-glass/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/MasterKPG/rust-glass/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/MasterKPG/rust-glass/releases/tag/v0.1.0
