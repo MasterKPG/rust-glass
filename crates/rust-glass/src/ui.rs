@@ -12,10 +12,14 @@ use crate::paint::Painter;
 use crate::text::{TextLayout, TextStyle, Weight};
 use crate::theme::Surface;
 
+/// How children line up across the direction of a layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Align {
+    /// At the left, or the top in a row.
     Start,
+    /// In the middle.
     Center,
+    /// At the right, or the bottom in a row.
     End,
 }
 
@@ -30,21 +34,40 @@ enum Dir {
 
 /// Anything that can be added with [`Ui::add`].
 pub trait Widget {
+    /// Lays out and draws the widget, and returns what happened to it.
     fn ui(self, ui: &mut Ui) -> Response;
 }
 
+/// A region that places widgets one after another and hands each a
+/// rectangle.
+///
+/// A `Ui` stacks widgets vertically unless it was made by
+/// [`Ui::horizontal`]. Widgets are drawn on its layer and clipped to
+/// [`Ui::clip`].
 pub struct Ui<'a> {
+    /// The window state.
     pub ctx: &'a mut Context,
+    /// The layer widgets are drawn on.
     pub layer: usize,
+    /// Widgets are only drawn and only react inside this rectangle.
     pub clip: Rect,
+    /// Mask applied to everything drawn. 0 is none.
     pub mask: u32,
+    /// Opacity of everything drawn, from 0 to 1.
     pub opacity: f32,
+    /// The space this `Ui` may use.
     pub max_rect: Rect,
+    /// Where the next widget goes.
     pub cursor: Vec2,
+    /// Gap between widgets, in points.
     pub spacing: f32,
+    /// How widgets line up across the layout direction.
     pub align: Align,
+    /// Widgets react to input. Disabled widgets are drawn faded.
     pub enabled: bool,
+    /// What widgets are drawn on. It decides label and fill colors.
     pub surface: Surface,
+    /// Id of this `Ui`. Widget ids are derived from it.
     pub id: Id,
     dir: Dir,
     content: Rect,
@@ -56,6 +79,9 @@ pub struct Ui<'a> {
 struct SizeMem(Vec2);
 
 impl<'a> Ui<'a> {
+    /// Creates a vertical layout in `max_rect`. Most code gets a `Ui` from
+    /// [`region`](crate::prelude::region) or [`Panel`](crate::prelude::Panel)
+    /// instead.
     pub fn new(ctx: &'a mut Context, layer: usize, id: Id, max: Rect) -> Self {
         let spacing = ctx.theme.spacing;
         let surface = Surface::Content { dark: ctx.theme.dark };
@@ -100,32 +126,39 @@ impl<'a> Ui<'a> {
         }
     }
 
-    /// Next automatic id.
+    /// Returns a new id for the next widget, derived from its position in this
+    /// layout.
     pub fn next_id(&mut self) -> Id {
         self.auto += 1;
         self.id.with(self.auto)
     }
-    pub fn make_id(&self, v: impl Hash) -> Id {
-        self.id.with(v)
+    /// Derives an id from this `Ui`'s id and `source`.
+    pub fn make_id(&self, source: impl Hash) -> Id {
+        self.id.with(source)
     }
 
+    /// Returns the width left in this layout.
     pub fn available_width(&self) -> f32 {
         (self.max_rect.max.x - self.cursor.x).max(0.0)
     }
+    /// Returns the height left in this layout.
     pub fn available_height(&self) -> f32 {
         (self.max_rect.max.y - self.cursor.y).max(0.0)
     }
+    /// Returns the space left in this layout.
     pub fn available(&self) -> Rect {
         Rect { min: self.cursor, max: self.max_rect.max.max(self.cursor) }
     }
-    /// Space used so far.
+    /// Returns the space used so far.
     pub fn used(&self) -> Rect {
         self.content
     }
+    /// Returns `true` in a row.
     pub fn is_horizontal(&self) -> bool {
         matches!(self.dir, Dir::Horizontal { .. })
     }
 
+    /// Takes space for a widget of `size` and returns where it goes.
     pub fn allocate(&mut self, size: Vec2) -> Rect {
         let gap = if self.first { 0.0 } else { self.spacing };
         self.first = false;
@@ -157,7 +190,7 @@ impl<'a> Ui<'a> {
         Rect { min: vec2(snap(r.min.x), snap(r.min.y)), max: vec2(snap(r.max.x), snap(r.max.y)) }
     }
 
-    /// Where the next widget will start.
+    /// Returns where the next widget will start.
     pub fn next_pos(&self) -> Vec2 {
         let gap = if self.first { 0.0 } else { self.spacing };
         match self.dir {
@@ -166,23 +199,24 @@ impl<'a> Ui<'a> {
         }
     }
 
-    /// Reserve space and sense input on it.
+    /// Takes space for a widget of `size` and senses input on it.
     pub fn allocate_response(&mut self, size: Vec2, sense: Sense) -> Response {
         let r = self.allocate(size);
         let id = self.next_id();
         self.interact(id, r, sense)
     }
 
-    pub fn interact(&mut self, id: Id, r: Rect, sense: Sense) -> Response {
+    /// Senses input on `rect` without taking space.
+    pub fn interact(&mut self, id: Id, rect: Rect, sense: Sense) -> Response {
         if !self.enabled {
-            let mut res = self.ctx.interact(id, r, self.clip, self.layer, Sense::Hover);
+            let mut res = self.ctx.interact(id, rect, self.clip, self.layer, Sense::Hover);
             res.hovered = false;
             return res;
         }
-        self.ctx.interact(id, r, self.clip, self.layer, sense)
+        self.ctx.interact(id, rect, self.clip, self.layer, sense)
     }
 
-    /// Make the space used so far at least `size`, measured from the top left.
+    /// Makes the space used so far at least `size`, measured from the top left.
     pub fn reserve(&mut self, size: Vec2) {
         self.content.max = self.content.max.max(self.max_rect.min + size);
         match self.dir {
@@ -191,10 +225,11 @@ impl<'a> Ui<'a> {
         }
     }
 
-    pub fn space(&mut self, v: f32) {
+    /// Adds an empty gap of `amount` points.
+    pub fn space(&mut self, amount: f32) {
         match self.dir {
-            Dir::Vertical => self.cursor.y += v,
-            Dir::Horizontal { .. } => self.cursor.x += v,
+            Dir::Vertical => self.cursor.y += amount,
+            Dir::Horizontal { .. } => self.cursor.x += amount,
         }
         self.content.max = self.content.max.max(vec2(
             if self.is_horizontal() { self.cursor.x } else { self.content.max.x },
@@ -202,6 +237,7 @@ impl<'a> Ui<'a> {
         ));
     }
 
+    /// Returns a painter on this `Ui`'s layer, with its clip, mask and opacity.
     pub fn painter(&mut self) -> Painter<'_> {
         let (l, c, m, o) = (self.layer, self.clip, self.mask, self.opacity);
         let o = if self.enabled { o } else { o * 0.4 };
@@ -211,12 +247,15 @@ impl<'a> Ui<'a> {
         p
     }
 
-    pub fn layout_text(&mut self, text: &str, st: &TextStyle) -> Rc<TextLayout> {
-        self.ctx.text.layout(text, st)
+    /// Lays out `text` in `style`. The result can be painted and measured.
+    pub fn layout_text(&mut self, text: &str, style: &TextStyle) -> Rc<TextLayout> {
+        self.ctx.text.layout(text, style)
     }
 
-    pub fn add(&mut self, w: impl Widget) -> Response {
-        w.ui(self)
+    /// Adds a widget, such as [`Button`](crate::prelude::Button) or
+    /// [`Slider`](crate::prelude::Slider).
+    pub fn add(&mut self, widget: impl Widget) -> Response {
+        widget.ui(self)
     }
 
     /// Describe an element for screen readers. `None` while none is listening.
@@ -237,6 +276,7 @@ impl<'a> Ui<'a> {
         Some(n)
     }
 
+    /// Runs `f` with widgets enabled or disabled.
     pub fn add_enabled<R>(&mut self, enabled: bool, f: impl FnOnce(&mut Ui) -> R) -> R {
         let old = self.enabled;
         self.enabled &= enabled;
@@ -268,15 +308,15 @@ impl<'a> Ui<'a> {
         }
     }
 
-    /// Children side by side, vertically centered.
+    /// Lays out the widgets added in `f` side by side, centered vertically.
     pub fn horizontal<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> R {
         self.row(Align::Start, f)
     }
-    /// Row centered in the available width.
+    /// Like [`Self::horizontal`], centered in the available width.
     pub fn horizontal_centered<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> R {
         self.row(Align::Center, f)
     }
-    /// Row pushed to the right edge.
+    /// Like [`Self::horizontal`], pushed to the right edge.
     pub fn horizontal_right<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> R {
         self.row(Align::End, f)
     }
@@ -312,7 +352,7 @@ impl<'a> Ui<'a> {
         out
     }
 
-    /// Children stacked in a column of the given width.
+    /// Stacks the widgets added in `f` in a column of `width` points.
     pub fn vertical<R>(&mut self, width: f32, f: impl FnOnce(&mut Ui) -> R) -> R {
         let id = self.next_id();
         let prev = self.size_of(id);
@@ -332,15 +372,15 @@ impl<'a> Ui<'a> {
         out
     }
 
-    /// Children stacked in a column as wide as they need, placed like a
-    /// single widget. Returns the rectangle it took.
+    /// Stacks the widgets added in `f` in a column as wide as they need, placed
+    /// like a single widget. Returns the result of `f` and the rectangle used.
     pub fn scope<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> (R, Rect) {
         let id = self.next_id();
         self.scope_id(id, f)
     }
 
-    /// Same as [`Self::scope`] with an id of your own, so the state of the
-    /// widgets inside follows the content when it moves in the layout.
+    /// Like [`Self::scope`] with an id of your own, so the state of the widgets
+    /// inside follows the content when it moves in the layout.
     pub fn scope_id<R>(&mut self, id: Id, f: impl FnOnce(&mut Ui) -> R) -> (R, Rect) {
         let prev = self.size_of(id);
         let gap = if self.first { 0.0 } else { self.spacing };
@@ -361,8 +401,10 @@ impl<'a> Ui<'a> {
         (out, r)
     }
 
-    /// Equal width columns. `f` is called once per column.
-    pub fn grid(&mut self, n: usize, gap: f32, mut f: impl FnMut(&mut Ui, usize)) {
+    /// Splits the width into `columns` columns of equal width with `gap` between
+    /// them. `f` is called once per column with its index.
+    pub fn grid(&mut self, columns: usize, gap: f32, mut f: impl FnMut(&mut Ui, usize)) {
+        let n = columns;
         let id = self.next_id();
         let w = ((self.available_width() - gap * (n as f32 - 1.0)) / n as f32).max(1.0);
         let g = if self.first { 0.0 } else { self.spacing };
@@ -379,8 +421,9 @@ impl<'a> Ui<'a> {
         self.allocate(vec2(w * n as f32 + gap * (n as f32 - 1.0), h));
     }
 
-    /// Inset region.
-    pub fn padded<R>(&mut self, pad: Vec2, f: impl FnOnce(&mut Ui) -> R) -> R {
+    /// Insets the widgets added in `f` by `padding` on each side.
+    pub fn padded<R>(&mut self, padding: Vec2, f: impl FnOnce(&mut Ui) -> R) -> R {
+        let pad = padding;
         let id = self.next_id();
         let gap = if self.first || self.is_horizontal() { 0.0 } else { self.spacing };
         let start = self.cursor + vec2(0.0, gap);
@@ -392,23 +435,27 @@ impl<'a> Ui<'a> {
         out
     }
 
-    /// Run `f` in an explicit rectangle, without affecting this layout.
-    pub fn in_rect<R>(&mut self, id: impl Hash, r: Rect, f: impl FnOnce(&mut Ui) -> R) -> R {
+    /// Lays out the widgets added in `f` in `rect`, without taking space here.
+    pub fn in_rect<R>(&mut self, id: impl Hash, rect: Rect, f: impl FnOnce(&mut Ui) -> R) -> R {
+        let r = rect;
         let id = self.id.with(id);
         let mut ui = self.sub(id, r, Dir::Vertical);
         f(&mut ui)
     }
 
-    /// Same, returning the size that was used.
-    pub fn in_rect_sized<R>(&mut self, id: impl Hash, r: Rect, f: impl FnOnce(&mut Ui) -> R) -> (R, Vec2) {
+    /// Like [`Self::in_rect`], and also returns the size used.
+    pub fn in_rect_sized<R>(&mut self, id: impl Hash, rect: Rect, f: impl FnOnce(&mut Ui) -> R) -> (R, Vec2) {
+        let r = rect;
         let id = self.id.with(id);
         let mut ui = self.sub(id, r, Dir::Vertical);
         let out = f(&mut ui);
         (out, ui.content.size())
     }
 
-    /// Row layout in an explicit rectangle, children centered on its height.
-    pub fn row_in_rect<R>(&mut self, id: impl Hash, r: Rect, f: impl FnOnce(&mut Ui) -> R) -> R {
+    /// Lays out the widgets added in `f` side by side in `rect`, centered on its
+    /// height.
+    pub fn row_in_rect<R>(&mut self, id: impl Hash, rect: Rect, f: impl FnOnce(&mut Ui) -> R) -> R {
+        let r = rect;
         let id = self.id.with(id);
         let mut ui = self.sub(id, r, Dir::Horizontal { row: r.height() });
         f(&mut ui)
@@ -420,7 +467,8 @@ impl<'a> Ui<'a> {
         (out, ui.content.size())
     }
 
-    /// Opaque-ish content card, not glass. Glass belongs on floating controls.
+    /// Groups the widgets added in `f` on a rounded, nearly opaque card. Cards
+    /// are content, not glass: glass belongs on floating controls.
     pub fn card<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> R {
         let id = self.next_id();
         let w = self.available_width();
@@ -428,7 +476,8 @@ impl<'a> Ui<'a> {
         let start = self.cursor + vec2(0.0, gap);
         let h = self.size_of(id.with("card")).y;
         let r = Rect::from_min_size(start, vec2(w, h));
-        let fill = if self.surface.dark() > 0.5 { Color::gray(0.13).alpha(0.82) } else { Color::white(0.80) };
+        let fill =
+            if self.surface.darkness() > 0.5 { Color::gray(0.13).alpha(0.82) } else { Color::white(0.80) };
         self.painter().fill(r, 20.0, fill);
         let max = Rect { min: start + vec2(18.0, 16.0), max: vec2(start.x + w - 18.0, self.max_rect.max.y) };
         let mut ui = self.sub(id, max, Dir::Vertical);
@@ -439,7 +488,8 @@ impl<'a> Ui<'a> {
         out
     }
 
-    /// A glass panel sized to its content, part of the normal layout.
+    /// Groups the widgets added in `f` on a glass panel that sizes itself to the
+    /// content.
     pub fn glass_panel<R>(&mut self, material: Material, f: impl FnOnce(&mut Ui) -> R) -> R {
         let id = self.next_id();
         let w = self.available_width();
@@ -458,44 +508,59 @@ impl<'a> Ui<'a> {
         out
     }
 
-    /// Paint an adaptive glass element and return the surface for its content.
-    pub fn glass(&mut self, id: Id, r: Rect, corner: impl Into<Corner>, m: Material, flips: bool) -> Surface {
-        let mut g = Glass::new(r, corner, m);
-        let a = self.ctx.prepare_glass(id, &mut g, flips);
+    /// Paints an adaptive glass element and returns the surface for content on
+    /// it.
+    pub fn glass(
+        &mut self,
+        id: Id,
+        rect: Rect,
+        corner: impl Into<Corner>,
+        material: Material,
+        adaptive: bool,
+    ) -> Surface {
+        let mut g = Glass::new(rect, corner, material);
+        let a = self.ctx.prepare_glass(id, &mut g, adaptive);
         self.painter().glass(&g);
         a.surface()
     }
 
     // ----- text -----
 
+    /// Adds text in the body size.
     pub fn label(&mut self, text: &str) -> Response {
-        let c = self.surface.text();
-        self.styled_text(text, TextStyle::new(self.ctx.theme.body), c)
+        let c = self.surface.text_color();
+        self.styled_text(text, TextStyle::new(self.ctx.theme.body_size), c)
     }
+    /// Adds less important text in the body size.
     pub fn secondary(&mut self, text: &str) -> Response {
-        let c = self.surface.secondary();
-        self.styled_text(text, TextStyle::new(self.ctx.theme.body), c)
+        let c = self.surface.secondary_color();
+        self.styled_text(text, TextStyle::new(self.ctx.theme.body_size), c)
     }
+    /// Adds small, less important text.
     pub fn caption(&mut self, text: &str) -> Response {
-        let c = self.surface.secondary();
-        self.styled_text(text, TextStyle::new(self.ctx.theme.caption), c)
+        let c = self.surface.secondary_color();
+        self.styled_text(text, TextStyle::new(self.ctx.theme.caption_size), c)
     }
+    /// Adds bold text in the body size.
     pub fn strong(&mut self, text: &str) -> Response {
-        let c = self.surface.text();
-        self.styled_text(text, TextStyle::new(self.ctx.theme.body).weight(Weight::Semibold), c)
+        let c = self.surface.text_color();
+        self.styled_text(text, TextStyle::new(self.ctx.theme.body_size).weight(Weight::Semibold), c)
     }
+    /// Adds a large title.
     pub fn heading(&mut self, text: &str) -> Response {
-        let c = self.surface.text();
-        let st = TextStyle::new(self.ctx.theme.title).weight(Weight::Bold);
+        let c = self.surface.text_color();
+        let st = TextStyle::new(self.ctx.theme.title_size).weight(Weight::Bold);
         self.text_role(text, st, c, Role::Heading)
     }
+    /// Adds a smaller title.
     pub fn subheading(&mut self, text: &str) -> Response {
-        let c = self.surface.text();
+        let c = self.surface.text_color();
         self.styled_text(text, TextStyle::new(17.0).weight(Weight::Semibold), c)
     }
 
-    pub fn styled_text(&mut self, text: &str, st: TextStyle, c: Color) -> Response {
-        self.text_role(text, st, c, Role::Label)
+    /// Adds text in `style` and `color`.
+    pub fn styled_text(&mut self, text: &str, style: TextStyle, color: Color) -> Response {
+        self.text_role(text, style, color, Role::Label)
     }
 
     fn text_role(&mut self, text: &str, mut st: TextStyle, c: Color, role: Role) -> Response {
@@ -526,8 +591,9 @@ impl<'a> Ui<'a> {
         }
     }
 
+    /// Adds a thin line across the layout direction.
     pub fn separator(&mut self) {
-        let c = self.surface.separator();
+        let c = self.surface.separator_color();
         match self.dir {
             Dir::Vertical => {
                 let w = self.available_width();
@@ -542,11 +608,12 @@ impl<'a> Ui<'a> {
         }
     }
 
-    /// Keyboard focus ring.
-    pub fn focus_ring(&mut self, id: Id, r: Rect, corner: impl Into<Corner>) {
+    /// Draws the keyboard focus ring around `rect` while `id` has focus from the
+    /// keyboard.
+    pub fn focus_ring(&mut self, id: Id, rect: Rect, corner: impl Into<Corner>) {
         if self.ctx.shows_focus(id) {
             let c = self.ctx.theme.accent;
-            self.painter().stroke(r.expand(3.5), corner, 2.5, c.alpha(0.85));
+            self.painter().stroke(rect.expand(3.5), corner, 2.5, c.alpha(0.85));
         }
     }
 }

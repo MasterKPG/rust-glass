@@ -1,3 +1,5 @@
+//! Buttons, button groups, split buttons and links.
+
 use crate::accessibility::Role;
 use crate::animation::Tuning;
 use crate::color::Color;
@@ -9,24 +11,43 @@ use crate::text::{TextStyle, Weight};
 use crate::ui::{Ui, Widget};
 use crate::widgets::press::PressEffect;
 
+/// The surface of a button.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ButtonKind {
+    /// Regular glass.
     Glass,
-    /// Accent colored glass for the primary action.
+    /// Glass in the accent color, for the main action.
     Prominent,
+    /// Clear glass, for buttons over photos and video.
     Clear,
+    /// Glass tinted with a color.
     Tinted(Color),
-    /// No surface until hovered.
+    /// No surface until hovered, with the label in the accent color.
     Plain,
 }
 
+/// The size of a button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonSize {
+    /// 80 percent of the control height.
     Small,
+    /// The control height of the theme.
     Regular,
+    /// 136 percent of the control height.
     Large,
 }
 
+/// A button with a label, an icon or both. It swells and stretches towards
+/// the pointer while pressed.
+///
+/// ```
+/// # use rust_glass::prelude::*;
+/// # fn f(ui: &mut Ui) {
+/// if ui.add(Button::new("Share").icon(Icon::Share).prominent()).clicked() {
+///     // Share.
+/// }
+/// # }
+/// ```
 #[derive(Clone, Debug)]
 pub struct Button<'a> {
     label: &'a str,
@@ -41,6 +62,7 @@ pub struct Button<'a> {
 }
 
 impl<'a> Button<'a> {
+    /// Creates a glass button with a text label.
     pub fn new(label: &'a str) -> Self {
         Self {
             label,
@@ -58,46 +80,58 @@ impl<'a> Button<'a> {
     pub fn icon_only(icon: Icon) -> Self {
         Self { icon: Some(icon), ..Self::new("") }
     }
-    pub fn icon(mut self, i: Icon) -> Self {
-        self.icon = Some(i);
+    /// Shows `icon` before the label.
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
         self
     }
-    pub fn kind(mut self, k: ButtonKind) -> Self {
-        self.kind = k;
+    /// Sets the kind of surface.
+    pub fn kind(mut self, kind: ButtonKind) -> Self {
+        self.kind = kind;
         self
     }
+    /// Uses the accent color, for the main action.
     pub fn prominent(self) -> Self {
         self.kind(ButtonKind::Prominent)
     }
+    /// Uses clear glass, for buttons over photos and video.
     pub fn clear(self) -> Self {
         self.kind(ButtonKind::Clear)
     }
+    /// Shows only the label, in the accent color, until hovered.
     pub fn plain(self) -> Self {
         self.kind(ButtonKind::Plain)
     }
-    pub fn tinted(self, c: Color) -> Self {
-        self.kind(ButtonKind::Tinted(c))
+    /// Uses glass tinted with `color`.
+    pub fn tinted(self, color: Color) -> Self {
+        self.kind(ButtonKind::Tinted(color))
     }
-    pub fn size(mut self, s: ButtonSize) -> Self {
-        self.size = s;
+    /// Sets the size.
+    pub fn size(mut self, size: ButtonSize) -> Self {
+        self.size = size;
         self
     }
+    /// Uses the small size.
     pub fn small(self) -> Self {
         self.size(ButtonSize::Small)
     }
+    /// Uses the large size.
     pub fn large(self) -> Self {
         self.size(ButtonSize::Large)
     }
-    pub fn corner(mut self, c: impl Into<Corner>) -> Self {
-        self.corner = c.into();
+    /// Sets the corners. The default is a capsule.
+    pub fn corner(mut self, corner: impl Into<Corner>) -> Self {
+        self.corner = corner.into();
         self
     }
-    pub fn min_width(mut self, w: f32) -> Self {
-        self.min_width = w;
+    /// Makes the button at least `width` points wide.
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
         self
     }
-    pub fn width(mut self, w: f32) -> Self {
-        self.width = Some(w);
+    /// Makes the button exactly `width` points wide.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
     /// Draw as switched on.
@@ -105,6 +139,7 @@ impl<'a> Button<'a> {
         self.selected = on;
         self
     }
+    /// Gives the button an id of its own, for buttons that move in the layout.
     pub fn id(mut self, id: Id) -> Self {
         self.id = Some(id);
         self
@@ -159,20 +194,20 @@ impl Widget for Button<'_> {
             _ if self.selected => Some(accent),
             _ => None,
         };
-        let mut color = ui.surface.text();
+        let mut color = ui.surface.text_color();
         let theme_regular = ui.ctx.theme.regular;
         let theme_clear = ui.ctx.theme.clear;
         match (self.kind, on_glass) {
             (ButtonKind::Plain, _) => {
                 color = accent;
-                let a = gel.hover * 0.8 + gel.press * 0.8;
-                let f = ui.surface.fill().fade(a);
+                let a = gel.hover * 0.8 + gel.amount * 0.8;
+                let f = ui.surface.fill_color().fade(a);
                 ui.painter().fill(gel.rect, self.corner, f);
             }
             // Glass on glass muddies both. On a glass surface buttons are fills.
             (_, true) => {
-                let base = fill.unwrap_or(ui.surface.fill());
-                let lit = Color::white(0.05 * gel.hover + 0.08 * gel.press.max(0.0));
+                let base = fill.unwrap_or(ui.surface.fill_color());
+                let lit = Color::white(0.05 * gel.hover + 0.08 * gel.amount.max(0.0));
                 let mut p = ui.painter();
                 p.fill(gel.rect, self.corner, base);
                 p.fill(gel.rect, self.corner, lit);
@@ -188,7 +223,7 @@ impl Widget for Button<'_> {
                 let mut g = Glass::new(gel.rect, self.corner, m);
                 let a = ui.ctx.prepare_glass(id, &mut g, true);
                 gel.apply(&mut g);
-                color = if fill.is_some() { Color::WHITE } else { a.surface().text() };
+                color = if fill.is_some() { Color::WHITE } else { a.surface().text_color() };
                 ui.painter().glass(&g);
             }
         }
@@ -252,8 +287,8 @@ impl<'a> ButtonGroup<'a> {
                 clicked = Some(i);
             }
             let g = PressEffect::update(ui.ctx, &res, 1.0);
-            press = press.max(g.press);
-            if g.press.abs() > 0.001 {
+            press = press.max(g.amount);
+            if g.amount.abs() > 0.001 {
                 // The whole bar swells around the pressed item.
                 bar = bar.union(g.rect.shrink2(vec2(0.0, 1.0)));
             }
@@ -266,8 +301,8 @@ impl<'a> ButtonGroup<'a> {
         let mut glass = Glass::new(bar, Corner::Capsule, m);
         let a = ui.ctx.prepare_glass(id, &mut glass, true);
         glass.brightness = 0.04 * press;
-        let color = a.surface().text();
-        let hl = a.surface().fill();
+        let color = a.surface().text_color();
+        let hl = a.surface().fill_color();
         let mut p = ui.painter();
         p.glass(&glass);
         for (i, (g, r)) in gels.iter().enumerate() {
@@ -348,8 +383,8 @@ impl<'a> SplitButton<'a> {
         let m = ui.ctx.theme.regular;
         let mut glass = Glass::group(shapes, m).fuse(fuse);
         let a = ui.ctx.prepare_glass(id, &mut glass, true);
-        glass.brightness = 0.05 * gel.press.max(0.0);
-        let color = a.surface().text();
+        glass.brightness = 0.05 * gel.amount.max(0.0);
+        let color = a.surface().text_color();
         let t = ui.ctx.animate(id.with("rot"), open as u32 as f32, Tuning::BOUNCY);
         let mut p = ui.painter();
         p.glass(&glass);
@@ -374,19 +409,22 @@ impl<'a> SplitButton<'a> {
 }
 
 impl Ui<'_> {
+    /// Adds a glass button. Check [`Response::clicked`] on the result.
     pub fn button(&mut self, label: &str) -> Response {
         self.add(Button::new(label))
     }
+    /// Adds a button in the accent color, for the main action.
     pub fn prominent_button(&mut self, label: &str) -> Response {
         self.add(Button::new(label).prominent())
     }
+    /// Adds a round button with only an icon.
     pub fn icon_button(&mut self, icon: Icon) -> Response {
         self.add(Button::icon_only(icon))
     }
 
     /// Text that behaves like a link.
     pub fn link(&mut self, label: &str) -> Response {
-        let st = TextStyle::new(self.ctx.theme.body).weight(Weight::Medium);
+        let st = TextStyle::new(self.ctx.theme.body_size).weight(Weight::Medium);
         let l = self.layout_text(label, &st);
         let r = self.allocate_response(l.size, Sense::Click);
         if let Some(n) = self.access(r.id, Role::Link, r.rect) {
@@ -407,6 +445,7 @@ impl Ui<'_> {
         r
     }
 
+    /// Adds a link that opens `url` in the browser when clicked.
     pub fn hyperlink(&mut self, label: &str, url: &str) -> Response {
         let r = self.link(label);
         if r.clicked {

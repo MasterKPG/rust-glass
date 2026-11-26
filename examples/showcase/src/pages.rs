@@ -157,7 +157,7 @@ fn scrolled(app: &mut Showcase, ctx: &mut Context, main: Rect, page: usize) {
 
 fn title(ui: &mut Ui, t: &str) {
     ui.space(8.0);
-    let c = ui.surface.text().fade(0.78);
+    let c = ui.surface.text_color().fade(0.78);
     ui.styled_text(t, TextStyle::new(13.0).weight(Weight::Semibold), c);
 }
 
@@ -502,12 +502,13 @@ fn lists(s: &mut State, ui: &mut Ui) {
                     ui.spacing = 0.0;
                     for col in 0..15 {
                         let r = ui.allocate(vec2(86.0, 30.0));
-                        let c = if (row + col) % 2 == 0 { ui.surface.fill() } else { Color::TRANSPARENT };
+                        let c =
+                            if (row + col) % 2 == 0 { ui.surface.fill_color() } else { Color::TRANSPARENT };
                         ui.painter().fill(r.shrink(1.0), 6.0, c);
                         let name = format!("{}{}", (b'A' + col as u8) as char, row + 1);
                         let st = TextStyle::new(13.0);
                         let l = ui.layout_text(&name, &st);
-                        let tc = ui.surface.secondary();
+                        let tc = ui.surface.secondary_color();
                         ui.painter().text(r.center() - l.size * 0.5, &l, tc);
                     }
                 });
@@ -522,10 +523,10 @@ fn lists(s: &mut State, ui: &mut Ui) {
                 let w = ui.available_width() - 12.0;
                 let r = ui.allocate(vec2(w, 32.0));
                 if i % 2 == 0 {
-                    let c = ui.surface.fill();
+                    let c = ui.surface.fill_color();
                     ui.painter().fill(r, 9.0, c);
                 }
-                let (tc, sc) = (ui.surface.text(), ui.surface.secondary());
+                let (tc, sc) = (ui.surface.text_color(), ui.surface.secondary_color());
                 let a =
                     ui.layout_text(&format!("Row {}", i + 1), &TextStyle::new(14.0).weight(Weight::Medium));
                 let b = ui.layout_text(&format!("#{:05X}", i * 7919 % 0xFFFFF), &TextStyle::new(13.0));
@@ -578,7 +579,7 @@ fn task_row(ui: &mut Ui, t: &str) {
 
 fn task_row_width(ui: &mut Ui, t: &str, w: f32) {
     let r = ui.allocate(vec2(w, 40.0));
-    let (fill, tc, sc) = (ui.surface.fill(), ui.surface.text(), ui.surface.tertiary());
+    let (fill, tc, sc) = (ui.surface.fill_color(), ui.surface.text_color(), ui.surface.tertiary_color());
     let l = ui.layout_text(t, &TextStyle::new(15.0));
     let mut p = ui.painter();
     p.fill(r, 12.0, fill);
@@ -628,7 +629,7 @@ fn settings(s: &mut State, ui: &mut Ui) {
         });
         ui.separator();
         SettingsRow::new("Increase Contrast").icon(Icon::Moon, Color::gray(0.35)).show(ui, |ui| {
-            ui.add(Toggle::new(&mut t.high_contrast));
+            ui.add(Toggle::new(&mut t.increase_contrast));
         });
         ui.separator();
         SettingsRow::new("Adapt to Background").icon(Icon::Drop, Color::TEAL).show(ui, |ui| {
@@ -659,7 +660,7 @@ fn player(app: &mut Showcase, ctx: &mut Context, main: Rect) {
     let s = &mut app.s;
     let page = Rect { min: main.min, max: main.max };
     region(ctx, "player", page, |ui| {
-        let bg = ui.ctx.theme.background();
+        let bg = ui.ctx.theme.background_color();
         let sheet = Rect { min: vec2(main.min.x, 14.0), max: vec2(main.max.x - 14.0, main.max.y - 14.0) };
         ui.painter().fill(sheet, 26.0, bg);
         let mask = ui.painter().add_mask(sheet, 26.0, false, Default::default());
@@ -724,14 +725,14 @@ fn player(app: &mut Showcase, ctx: &mut Context, main: Rect) {
         let ctl = Rect { min: vec2(bar.max.x - 148.0, bar.min.y), max: bar.max };
         ui.row_in_rect("c", ctl, |ui| {
             ui.spacing = 4.0;
-            let c = ui.surface.text();
+            let c = ui.surface.text_color();
             for (k, i) in [Icon::Backward, if s.playing { Icon::Pause } else { Icon::Play }, Icon::Forward]
                 .into_iter()
                 .enumerate()
             {
                 let r = ui.allocate_response(vec2(42.0, 42.0), Sense::Click);
                 let g = rust_glass::widgets::press::PressEffect::update(ui.ctx, &r, 1.0);
-                let f = ui.surface.fill();
+                let f = ui.surface.fill_color();
                 let mut p = ui.painter();
                 p.fill(g.rect, Corner::Capsule, f.fade(g.hover));
                 p.icon(g.rect.center(), 22.0 * g.scale, i, c);
@@ -777,7 +778,7 @@ fn lab(app: &mut Showcase, ctx: &mut Context, main: Rect) {
     let l = ctx.text.layout("Drag me", &TextStyle::new(17.0).weight(Weight::Semibold));
     let mut p = ctx.painter(layer, Rect::EVERYTHING);
     p.glass(&g);
-    p.text_centered(body, &l, a.surface().text(), 1.0);
+    p.text_centered(body, &l, a.surface().text_color(), 1.0);
 
     let panel =
         Rect::from_min_size(vec2(main.min.x, main.max.y - 14.0 - 352.0), vec2(main.width() - 14.0, 352.0));

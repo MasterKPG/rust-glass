@@ -17,6 +17,7 @@ pub struct Panel {
 }
 
 impl Panel {
+    /// Creates a panel at `rect`.
     pub fn new(id: impl std::hash::Hash, rect: Rect) -> Self {
         Self {
             id: Id::new(("panel", Id::new(id).0)),
@@ -28,16 +29,19 @@ impl Panel {
             order: Order::Bar,
         }
     }
-    pub fn corner(mut self, c: impl Into<Corner>) -> Self {
-        self.corner = c.into();
+    /// Sets the corners. The default is a radius of 28.
+    pub fn corner(mut self, corner: impl Into<Corner>) -> Self {
+        self.corner = corner.into();
         self
     }
-    pub fn material(mut self, m: Material) -> Self {
-        self.material = Some(m);
+    /// Sets the material. The default is the theme's thick glass.
+    pub fn material(mut self, material: Material) -> Self {
+        self.material = Some(material);
         self
     }
-    pub fn padding(mut self, p: f32) -> Self {
-        self.pad = p;
+    /// Sets the space between the edge and the content. The default is 14.
+    pub fn padding(mut self, padding: f32) -> Self {
+        self.pad = padding;
         self
     }
     /// Small panels may switch between light and dark.
@@ -45,11 +49,13 @@ impl Panel {
         self.flips = true;
         self
     }
-    pub fn order(mut self, o: Order) -> Self {
-        self.order = o;
+    /// Sets the layer order. The default is [`Order::Bar`].
+    pub fn order(mut self, order: Order) -> Self {
+        self.order = order;
         self
     }
 
+    /// Shows the panel with the content drawn by `f`.
     pub fn show<R>(mut self, ctx: &mut Context, f: impl FnOnce(&mut Ui) -> R) -> R {
         self.rect = self.rect.snap(ctx.pixels_per_point);
         let layer = ctx.layer(self.id, self.order);

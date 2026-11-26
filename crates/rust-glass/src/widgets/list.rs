@@ -21,12 +21,12 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
     let top = ui.next_pos().y;
     let y = ui.ctx.animate(id, *selected as f32, Tuning::new(0.34, 0.78));
     let v = ui.ctx.get::<crate::animation::Spring>(id).velocity;
-    let accent = ui.ctx.theme.accent.lerp(Color::WHITE, 0.35 * ui.surface.dark());
+    let accent = ui.ctx.theme.accent.lerp(Color::WHITE, 0.35 * ui.surface.darkness());
     // The highlight stretches along its way.
     let s = (v.abs() * 0.9).min(9.0);
     let hl = Rect::from_min_size(vec2(ui.cursor.x, top + y * (h + 2.0)), vec2(w, h))
         .expand2(vec2(-s * 0.2, s * 0.35));
-    let c = ui.surface.fill_strong();
+    let c = ui.surface.strong_fill_color();
     ui.painter().fill(hl, Corner::Capsule, c);
     for (i, (icon, label)) in items.iter().enumerate() {
         let r = ui.allocate_response(vec2(w, h), Sense::Click);
@@ -43,9 +43,9 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
         let hov = ui.ctx.animate_bool(r.id.with("h"), r.hovered && i != *selected, Tuning::SNAP);
         let on = ui.ctx.animate_bool(r.id.with("on"), i == *selected, Tuning::SNAP);
         let weight = if i == *selected { Weight::Semibold } else { Weight::Medium };
-        let st = TextStyle::new(ui.ctx.theme.body).weight(weight);
+        let st = TextStyle::new(ui.ctx.theme.body_size).weight(weight);
         let l = ui.layout_text(label, &st);
-        let (f, t) = (ui.surface.fill(), ui.surface.text());
+        let (f, t) = (ui.surface.fill_color(), ui.surface.text_color());
         let mut p = ui.painter();
         p.fill(r.rect, Corner::Capsule, f.fade(hov * 0.7));
         p.icon(vec2(r.rect.min.x + 22.0, r.rect.center().y), 18.0, *icon, t.lerp(accent, on));
@@ -58,7 +58,7 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
 
 /// Content card with a title, for grouping controls.
 pub fn section(ui: &mut Ui, title: &str, f: impl FnOnce(&mut Ui)) {
-    let c = ui.surface.secondary();
+    let c = ui.surface.secondary_color();
     let st = TextStyle::new(13.0).weight(Weight::Semibold);
     ui.styled_text(title, st, c);
     ui.card(f);
@@ -68,9 +68,9 @@ pub fn section(ui: &mut Ui, title: &str, f: impl FnOnce(&mut Ui)) {
 pub fn table(ui: &mut Ui, header: &[&str], rows: &[Vec<String>]) {
     let n = header.len().max(1);
     let w = ui.available_width() / n as f32;
-    let (tc, sc, sep) = (ui.surface.text(), ui.surface.secondary(), ui.surface.separator());
+    let (tc, sc, sep) = (ui.surface.text_color(), ui.surface.secondary_color(), ui.surface.separator_color());
     let hs = TextStyle::new(12.0).weight(Weight::Semibold);
-    let bs = TextStyle::new(ui.ctx.theme.body);
+    let bs = TextStyle::new(ui.ctx.theme.body_size);
     let total = ui.available_width();
     let old = ui.spacing;
     ui.spacing = 0.0;
@@ -78,7 +78,7 @@ pub fn table(ui: &mut Ui, header: &[&str], rows: &[Vec<String>]) {
         let r = ui.allocate_response(vec2(total, h), Sense::Hover);
         let hov = ui.ctx.animate_bool(r.id, r.hovered && i > 0, Tuning::SNAP);
         let ls: Vec<_> = cells.iter().map(|t| ui.layout_text(t, st)).collect();
-        let f = ui.surface.fill();
+        let f = ui.surface.fill_color();
         let mut p = ui.painter();
         p.fill(r.rect.expand2(vec2(8.0, 0.0)), 8.0, f.fade(hov * 0.8));
         for (k, l) in ls.iter().enumerate() {
@@ -121,9 +121,9 @@ impl<'a> SettingsRow<'a> {
     pub fn show(self, ui: &mut Ui, trailing: impl FnOnce(&mut Ui)) {
         let w = ui.available_width();
         let r = ui.allocate(vec2(w, 40.0));
-        let st = TextStyle::new(ui.ctx.theme.body);
+        let st = TextStyle::new(ui.ctx.theme.body_size);
         let l = ui.layout_text(self.title, &st);
-        let c = ui.surface.text();
+        let c = ui.surface.text_color();
         let mut x = r.min.x;
         let mut p = ui.painter();
         if let Some((i, bg)) = self.icon {

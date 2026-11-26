@@ -100,10 +100,10 @@ impl<'a> TabBar<'a> {
         g.brightness = 0.09 * press;
         let s = a.surface();
         let accent = ctx.theme.accent;
-        let accent = if a.dark > 0.5 { accent.lerp(Color::WHITE, 0.15) } else { accent };
+        let accent = if a.darkness > 0.5 { accent.lerp(Color::WHITE, 0.15) } else { accent };
         // At the clearest setting the blob is pure glass. Towards tinted it gets
         // a milky body under the labels and bends less.
-        let veil = ctx.theme.veil();
+        let veil = ctx.theme.tab_blob_veil();
         let mut m = ctx.theme.blob;
         m.refraction *= 1.0 - 0.55 * veil;
         m.pinch *= 1.0 - 0.6 * veil;
@@ -119,13 +119,13 @@ impl<'a> TabBar<'a> {
         let mut warp = Glass::new(drop, round, m).presence(lift);
         warp.light_bend = f.bend;
         let inside = body.expand(-3.5);
-        let milk = Color::WHITE.lerp(Color::gray(0.30), a.dark).alpha(0.85 * veil * lift);
+        let milk = Color::WHITE.lerp(Color::gray(0.30), a.darkness).alpha(0.85 * veil * lift);
         let small = TextStyle::new(10.5).weight(Weight::Semibold);
         let labels: Vec<_> = self.tabs.iter().map(|t| ctx.text.layout(t.1, &small)).collect();
 
         let mut p = ctx.painter(layer, Rect::EVERYTHING);
         p.glass(&g);
-        p.fill(drop, round, s.fill_strong().fade((1.0 - lift * 1.5).max(0.0) * 0.8));
+        p.fill(drop, round, s.strong_fill_color().fade((1.0 - lift * 1.5).max(0.0) * 0.8));
         p.fill(drop, round, milk);
         let draw = |p: &mut crate::paint::Painter, c: Color, k: f32| {
             for (i, label) in labels.iter().enumerate() {
@@ -136,7 +136,7 @@ impl<'a> TabBar<'a> {
             }
         };
         let out = p.add_mask(drop, round, true, Feather::default());
-        p.with_mask(out, |p| draw(p, s.text(), 1.0));
+        p.with_mask(out, |p| draw(p, s.text_color(), 1.0));
         p.glass(&lens);
         let inm = p.add_mask(drop, round, false, Feather::default());
         p.with_mask(inm, |p| draw(p, accent, 1.0 + 0.18 * lift));

@@ -203,14 +203,20 @@ impl Grid {
     }
 }
 
-/// Number of passes, captured pixels and draw sizes of the last frame.
+/// What the renderer did in the last frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameStats {
+    /// Render passes. Glass needs a pass to read what is below it.
     pub passes: u32,
+    /// Pixels copied for glass to read, in total.
     pub captured_px: u64,
+    /// Shapes, glyphs and images drawn.
     pub shapes: u32,
+    /// Glass elements drawn.
     pub glasses: u32,
-    pub gpu_ms: f32,
+    /// GPU time in milliseconds, smoothed. `None` where the GPU cannot
+    /// measure time, such as some virtual machines.
+    pub gpu_ms: Option<f32>,
 }
 
 struct Readback {
@@ -920,7 +926,7 @@ impl Renderer {
                 let v: &[u64] = bytemuck::cast_slice(&view);
                 let ms = v[1].saturating_sub(v[0]) as f32 * t.period / 1e6;
                 let s = &mut self.frame_stats.gpu_ms;
-                *s = if *s == 0.0 { ms } else { *s * 0.9 + ms * 0.1 };
+                *s = Some(s.map_or(ms, |old| old * 0.9 + ms * 0.1));
             }
             t.read.unmap();
             t.state.store(0, Ordering::Release);

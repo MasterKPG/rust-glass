@@ -117,6 +117,8 @@ fn place(anchor: Rect, size: Vec2, screen: Rect) -> Rect {
     Rect::from_min_size(vec2(x, y), size).clamp_inside(screen.shrink(8.0))
 }
 
+/// Shows `text` in a small bubble above `anchor` after the pointer rests on
+/// it. Call it every frame the anchor is hovered.
 pub fn tooltip(ctx: &mut Context, id: Id, anchor: Rect, text: &str) {
     if text.is_empty() {
         return;
@@ -160,7 +162,7 @@ pub fn tooltip(ctx: &mut Context, id: Id, anchor: Rect, text: &str) {
     let a = ctx.prepare_glass(key, &mut g, false);
     let mut p = ctx.painter(layer, Rect::EVERYTHING);
     p.glass(&g);
-    p.text_centered(r, &l, a.surface().text().fade(e), 1.0);
+    p.text_centered(r, &l, a.surface().text_color().fade(e), 1.0);
 }
 
 impl Response {

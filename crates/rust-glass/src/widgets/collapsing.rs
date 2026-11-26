@@ -49,10 +49,10 @@ impl<'a> Collapsing<'a> {
             ui.ctx.cursor = Cursor::Pointer;
         }
         let t = ui.ctx.animate_bool(id.with("t"), s.open, Tuning::new(0.40, 0.84));
-        let st = TextStyle::new(ui.ctx.theme.body).weight(Weight::Semibold);
+        let st = TextStyle::new(ui.ctx.theme.body_size).weight(Weight::Semibold);
         let l = ui.layout_text(self.title, &st);
-        let c = ui.surface.text();
-        let cc = ui.surface.secondary();
+        let c = ui.surface.text_color();
+        let cc = ui.surface.secondary_color();
         let m = vec2(rect.min.x + 8.0, rect.center().y);
         let a = t * TAU / 4.0;
         let rot = |v: Vec2| vec2(v.x * a.cos() - v.y * a.sin(), v.x * a.sin() + v.y * a.cos());
@@ -86,6 +86,7 @@ impl<'a> Collapsing<'a> {
 }
 
 impl Ui<'_> {
+    /// Adds a closed section whose content `f` shows when the title is clicked.
     pub fn collapsing(&mut self, title: &str, f: impl FnOnce(&mut Ui)) {
         Collapsing::new(title).show(self, f);
     }

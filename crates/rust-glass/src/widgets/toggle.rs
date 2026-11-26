@@ -20,19 +20,24 @@ pub struct Toggle<'a> {
 }
 
 impl<'a> Toggle<'a> {
+    /// Creates a switch for `on`.
     pub fn new(on: &'a mut bool) -> Self {
         Self { on, label: "", tint: Color::GREEN, scale: 1.0 }
     }
-    pub fn label(mut self, l: &'a str) -> Self {
-        self.label = l;
+    /// Shows `label` before the switch. In a vertical layout the row then
+    /// takes the full width, with the switch at the end.
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label = label;
         self
     }
-    pub fn tint(mut self, c: Color) -> Self {
-        self.tint = c;
+    /// Sets the color when on. The default is green.
+    pub fn tint(mut self, color: Color) -> Self {
+        self.tint = color;
         self
     }
-    pub fn scale(mut self, s: f32) -> Self {
-        self.scale = s;
+    /// Scales the switch.
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
         self
     }
 }
@@ -43,7 +48,7 @@ impl Widget for Toggle<'_> {
         let size = vec2(60.0, 27.0) * k;
         let rest = vec2(36.0, 23.0) * k;
         let lifted = vec2(52.0, 35.0) * k;
-        let st = TextStyle::new(ui.ctx.theme.body);
+        let st = TextStyle::new(ui.ctx.theme.body_size);
         let text = (!self.label.is_empty()).then(|| ui.layout_text(self.label, &st));
         let fill_row = text.is_some() && !ui.is_horizontal();
         let tw = text.as_ref().map_or(0.0, |t| t.size.x + 12.0);
@@ -91,11 +96,11 @@ impl Widget for Toggle<'_> {
         store_thumb(ui.ctx, id, d);
 
         let t = ((d.pos.value - x0) / (x1 - x0)).clamp(0.0, 1.0);
-        let off = ui.surface.fill_strong();
+        let off = ui.surface.strong_fill_color();
         let knob = ui.surface.thumb_color();
         let thumb = thumb_rect(ui.ctx, vec2(ox + d.pos.value, track.center().y), &f);
         let glass = thumb_glass(ui.ctx, thumb, &f, knob, k);
-        let tc = ui.surface.text();
+        let tc = ui.surface.text_color();
         let on_c = self.tint;
         let mut p = ui.painter();
         if let Some(l) = &text {
@@ -110,6 +115,7 @@ impl Widget for Toggle<'_> {
 }
 
 impl Ui<'_> {
+    /// Adds a switch with a label.
     pub fn toggle(&mut self, on: &mut bool, label: &str) -> Response {
         self.add(Toggle::new(on).label(label))
     }

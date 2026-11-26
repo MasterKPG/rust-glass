@@ -160,7 +160,7 @@ pub fn thumb_rect(ctx: &Context, center: Vec2, f: &ThumbFrame) -> Rect {
 pub fn thumb_glass(ctx: &Context, rect: Rect, f: &ThumbFrame, knob: Color, k: f32) -> Glass {
     let mut lens = ctx.theme.lens.scaled(k);
     // Less clear glass: a light veil and a calmer bend.
-    let veil = ctx.theme.tinted() * 0.75;
+    let veil = ctx.theme.tint_above_default() * 0.75;
     lens.light_range.0 = lerp(lens.light_range.0, 0.62, veil);
     lens.dark_range.0 = lerp(lens.dark_range.0, 0.30, veil);
     lens.refraction *= 1.0 - 0.35 * veil;

@@ -1,4 +1,6 @@
-//! Text shaping, layout caching and the glyph/icon atlas.
+//! Text layout. Text uses the interface font of the platform, shaped by
+//! cosmic-text. Layouts are cached, so laying out the same text every frame
+//! is cheap.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -15,12 +17,17 @@ use crate::icon::Icon;
 pub(crate) const ATLAS_SIZE: u32 = 2048;
 pub(crate) const SPRITE_ATLAS_SIZE: u32 = 1024;
 
+/// Font weight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Weight {
+    /// 400.
     #[default]
     Regular,
+    /// 500.
     Medium,
+    /// 600.
     Semibold,
+    /// 700.
     Bold,
 }
 
@@ -35,41 +42,56 @@ impl Weight {
     }
 }
 
+/// Horizontal alignment of wrapped lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum TextAlign {
+    /// Lines start at the left edge.
     #[default]
     Left,
+    /// Lines are centered.
     Center,
+    /// Lines end at the right edge.
     Right,
 }
 
+/// How text is set: size, weight, font and wrapping.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextStyle {
+    /// Font size in points.
     pub size: f32,
+    /// Font weight.
     pub weight: Weight,
+    /// Use the monospace font.
     pub mono: bool,
+    /// Wrap lines at this width in points. `None` keeps one line.
     pub wrap: Option<f32>,
+    /// Alignment of wrapped lines.
     pub align: TextAlign,
 }
 
 impl TextStyle {
+    /// Creates a regular, unwrapped style of `size` points.
     pub fn new(size: f32) -> Self {
         Self { size, weight: Weight::Regular, mono: false, wrap: None, align: TextAlign::Left }
     }
-    pub fn weight(mut self, w: Weight) -> Self {
-        self.weight = w;
+    /// Sets the weight.
+    pub fn weight(mut self, weight: Weight) -> Self {
+        self.weight = weight;
         self
     }
+    /// Uses the monospace font.
     pub fn mono(mut self) -> Self {
         self.mono = true;
         self
     }
+    /// Wraps lines at `width` points.
     pub fn wrap(mut self, width: f32) -> Self {
         self.wrap = Some(width);
         self
     }
-    pub fn align(mut self, a: TextAlign) -> Self {
-        self.align = a;
+    /// Sets the alignment of wrapped lines.
+    pub fn align(mut self, align: TextAlign) -> Self {
+        self.align = align;
         self
     }
 }
@@ -95,16 +117,20 @@ pub(crate) struct Line {
     pub stops: Vec<(usize, f32)>,
 }
 
+/// Text that has been shaped and laid out. Paint it with
+/// [`Painter::text`](crate::Painter::text).
 #[derive(Clone, Debug)]
 pub struct TextLayout {
+    /// Size of the laid out text in points.
     pub size: Vec2,
+    /// Font size it was laid out at.
     pub font_size: f32,
     pub(crate) glyphs: Vec<Glyph>,
     pub(crate) lines: Vec<Line>,
 }
 
 impl TextLayout {
-    /// Position of the caret before byte `index`: (x, top, height).
+    /// Returns the caret before byte `index` as `(x, top, height)`.
     pub fn caret(&self, index: usize) -> (f32, f32, f32) {
         for (i, l) in self.lines.iter().enumerate() {
             let last = i + 1 == self.lines.len();
@@ -120,8 +146,9 @@ impl TextLayout {
         (0.0, 0.0, self.font_size * 1.3)
     }
 
-    /// Byte index closest to a point.
-    pub fn hit(&self, p: Vec2) -> usize {
+    /// Returns the byte index closest to `point`.
+    pub fn hit(&self, point: Vec2) -> usize {
+        let p = point;
         let Some(line) = self.lines.iter().find(|l| p.y < l.top + l.height).or(self.lines.last()) else {
             return 0;
         };
@@ -187,6 +214,8 @@ enum Key {
     Icon(Icon, u32),
 }
 
+/// Lays out text and keeps the fonts. Reach it through
+/// [`Context::text`](crate::Context::text).
 pub struct TextEngine {
     pub(crate) fonts: FontSystem,
     swash: SwashCache,
@@ -196,7 +225,10 @@ pub struct TextEngine {
     shelf: Shelf,
     sprite_shelf: Shelf,
     pub(crate) uploads: Vec<AtlasUpload>,
+    /// Family name of the interface font. Change it after
+    /// [`TextEngine::add_font`] to use your own font.
     pub sans: String,
+    /// Family name of the monospace font.
     pub mono: String,
     frame: u64,
     full: bool,
@@ -210,6 +242,7 @@ impl Default for TextEngine {
 }
 
 impl TextEngine {
+    /// Loads the system fonts and picks the interface font of the platform.
     pub fn new() -> Self {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
@@ -257,7 +290,7 @@ impl TextEngine {
         }
     }
 
-    /// Register a font file. The family becomes available by name.
+    /// Adds a font file. Its family becomes available by name.
     pub fn add_font(&mut self, bytes: Vec<u8>) {
         self.fonts.db_mut().load_font_data(bytes);
         self.layouts.clear();
@@ -285,7 +318,9 @@ impl TextEngine {
         }
     }
 
-    pub fn layout(&mut self, text: &str, st: &TextStyle) -> Rc<TextLayout> {
+    /// Lays out `text` in `style`. Results are cached.
+    pub fn layout(&mut self, text: &str, style: &TextStyle) -> Rc<TextLayout> {
+        let st = style;
         let mut h = std::hash::DefaultHasher::new();
         text.hash(&mut h);
         st.size.to_bits().hash(&mut h);

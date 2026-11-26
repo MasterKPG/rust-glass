@@ -1,75 +1,116 @@
-//! Non premultiplied color in the sRGB (gamma) encoding. Blending happens in
-//! the same space, which is what desktop compositors and Core Animation do.
+//! Colors.
+//!
+//! Components are not premultiplied and are stored in the sRGB encoding.
+//! Blending happens in that same space, like desktop compositors and Core
+//! Animation do.
 
+/// An RGBA color with components from 0 to 1, in the sRGB encoding.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
+    /// Red, 0 to 1.
     pub r: f32,
+    /// Green, 0 to 1.
     pub g: f32,
+    /// Blue, 0 to 1.
     pub b: f32,
+    /// Opacity, 0 to 1.
     pub a: f32,
 }
 
 impl Color {
+    /// Fully transparent black.
     pub const TRANSPARENT: Color = Color::rgba(0.0, 0.0, 0.0, 0.0);
+    /// Opaque white.
     pub const WHITE: Color = Color::rgb(1.0, 1.0, 1.0);
+    /// Opaque black.
     pub const BLACK: Color = Color::rgb(0.0, 0.0, 0.0);
+    /// The system blue. The default accent color.
     pub const BLUE: Color = Color::hex(0x0A84FF);
+    /// The system green.
     pub const GREEN: Color = Color::hex(0x34C759);
+    /// The system red.
     pub const RED: Color = Color::hex(0xFF3B30);
+    /// The system orange.
     pub const ORANGE: Color = Color::hex(0xFF9500);
+    /// The system yellow.
     pub const YELLOW: Color = Color::hex(0xFFCC00);
+    /// The system pink.
     pub const PINK: Color = Color::hex(0xFF2D6F);
+    /// The system purple.
     pub const PURPLE: Color = Color::hex(0xAF52DE);
+    /// The system teal.
     pub const TEAL: Color = Color::hex(0x30B0C7);
+    /// The system indigo.
     pub const INDIGO: Color = Color::hex(0x5856D6);
 
+    /// Creates a color from red, green, blue and opacity.
     pub const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }
     }
+    /// Creates an opaque color from red, green and blue.
     pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
         Self { r, g, b, a: 1.0 }
     }
-    pub const fn hex(v: u32) -> Self {
-        Self::rgb(((v >> 16) & 255) as f32 / 255.0, ((v >> 8) & 255) as f32 / 255.0, (v & 255) as f32 / 255.0)
+    /// Creates an opaque color from a `0xRRGGBB` value.
+    ///
+    /// ```
+    /// # use rust_glass::Color;
+    /// assert_eq!(Color::hex(0xFF0000), Color::rgb(1.0, 0.0, 0.0));
+    /// ```
+    pub const fn hex(rgb: u32) -> Self {
+        Self::rgb(
+            ((rgb >> 16) & 255) as f32 / 255.0,
+            ((rgb >> 8) & 255) as f32 / 255.0,
+            (rgb & 255) as f32 / 255.0,
+        )
     }
-    pub const fn gray(v: f32) -> Self {
-        Self::rgb(v, v, v)
+    /// Creates an opaque gray, from 0 (black) to 1 (white).
+    pub const fn gray(level: f32) -> Self {
+        Self::rgb(level, level, level)
     }
-    pub const fn black(a: f32) -> Self {
-        Self::rgba(0.0, 0.0, 0.0, a)
+    /// Creates black with the given opacity.
+    pub const fn black(alpha: f32) -> Self {
+        Self::rgba(0.0, 0.0, 0.0, alpha)
     }
-    pub const fn white(a: f32) -> Self {
-        Self::rgba(1.0, 1.0, 1.0, a)
+    /// Creates white with the given opacity.
+    pub const fn white(alpha: f32) -> Self {
+        Self::rgba(1.0, 1.0, 1.0, alpha)
     }
-    /// Replace the alpha.
-    pub const fn alpha(self, a: f32) -> Self {
-        Self { a, ..self }
+    /// Returns the color with its opacity replaced.
+    pub const fn alpha(self, alpha: f32) -> Self {
+        Self { a: alpha, ..self }
     }
-    /// Multiply the alpha.
-    pub fn fade(self, f: f32) -> Self {
-        Self { a: self.a * f, ..self }
+    /// Returns the color with its opacity multiplied by `factor`.
+    pub fn fade(self, factor: f32) -> Self {
+        Self { a: self.a * factor, ..self }
     }
-    pub fn lerp(self, o: Color, t: f32) -> Color {
+    /// Mixes towards `other`: `t` = 0 gives `self`, 1 gives `other`.
+    pub fn lerp(self, other: Color, t: f32) -> Color {
         Color {
-            r: self.r + (o.r - self.r) * t,
-            g: self.g + (o.g - self.g) * t,
-            b: self.b + (o.b - self.b) * t,
-            a: self.a + (o.a - self.a) * t,
+            r: self.r + (other.r - self.r) * t,
+            g: self.g + (other.g - self.g) * t,
+            b: self.b + (other.b - self.b) * t,
+            a: self.a + (other.a - self.a) * t,
         }
     }
+    /// Returns the perceived brightness, from 0 to 1.
     pub fn luma(self) -> f32 {
         0.299 * self.r + 0.587 * self.g + 0.114 * self.b
     }
+    /// Returns `[r, g, b, a]`.
     pub fn to_array(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
     }
+    /// Returns the color as `0xRRGGBB`, without opacity.
     pub fn to_hex(self) -> u32 {
-        let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
-        (c(self.r) << 16) | (c(self.g) << 8) | c(self.b)
+        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+        (byte(self.r) << 16) | (byte(self.g) << 8) | byte(self.b)
     }
 
-    pub fn from_hsv(h: f32, s: f32, v: f32) -> Color {
-        let h = h.rem_euclid(1.0) * 6.0;
+    /// Creates an opaque color from hue, saturation and value, each 0 to 1.
+    pub fn from_hsv(hue: f32, saturation: f32, value: f32) -> Color {
+        let (s, v) = (saturation, value);
+        let h = hue.rem_euclid(1.0) * 6.0;
         let i = h.floor();
         let f = h - i;
         let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
@@ -83,6 +124,7 @@ impl Color {
         }
     }
 
+    /// Returns hue, saturation and value, each 0 to 1.
     pub fn to_hsv(self) -> (f32, f32, f32) {
         let max = self.r.max(self.g).max(self.b);
         let min = self.r.min(self.g).min(self.b);

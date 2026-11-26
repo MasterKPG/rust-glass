@@ -115,10 +115,12 @@ impl Showcase {
                 let g = info.gpu;
                 let fps = if info.interval_ms > 0.1 { 1000.0 / info.interval_ms } else { 0.0 };
                 let t = format!(
-                    "{fps:.0} fps   ui {:.2}   gpu {:.2} ms   {} passes",
-                    info.ui_ms, g.gpu_ms, g.passes
+                    "{fps:.0} fps   ui {:.2}   gpu {} ms   {} passes",
+                    info.ui_ms,
+                    g.gpu_ms.map_or("n/a".into(), |ms| format!("{ms:.2}")),
+                    g.passes
                 );
-                let c = ui.surface.secondary();
+                let c = ui.surface.secondary_color();
                 ui.styled_text(&t, TextStyle::new(10.5), c);
             });
         });
@@ -173,9 +175,9 @@ fn capture(dir: &str) -> Result<(), String> {
         }
         let g = hl.info.gpu;
         report += &format!(
-            "{:<20} ui {ui:.2} ms, encode {enc:.2} ms, gpu {:.2} ms, {} passes, {} glass, {} shapes, {} kpx captured\n",
+            "{:<20} ui {ui:.2} ms, encode {enc:.2} ms, gpu {} ms, {} passes, {} glass, {} shapes, {} kpx captured\n",
             p.1,
-            g.gpu_ms,
+            g.gpu_ms.map_or("n/a".into(), |ms| format!("{ms:.2}")),
             g.passes,
             g.glasses,
             g.shapes,
@@ -256,7 +258,7 @@ fn capture(dir: &str) -> Result<(), String> {
     shot(&mut hl, &mut app, "shot_frost", 0, 0, &[])?;
     hl.ctx.theme.glass_tint = Theme::DEFAULT_GLASS_TINT;
     hl.ctx.theme.reduce_transparency = true;
-    hl.ctx.theme.high_contrast = true;
+    hl.ctx.theme.increase_contrast = true;
     shot(&mut hl, &mut app, "shot_access", 0, 0, &[])?;
     std::fs::write(format!("{dir}/report.txt"), &report).map_err(|e| e.to_string())?;
     println!("{report}");

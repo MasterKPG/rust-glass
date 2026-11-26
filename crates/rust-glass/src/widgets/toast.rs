@@ -8,7 +8,7 @@ use crate::material::{Corner, Glass, GlassShape};
 use crate::text::{TextStyle, Weight};
 
 #[derive(Clone, Debug)]
-pub struct ToastState {
+pub(crate) struct ToastState {
     icon: Option<Icon>,
     text: String,
     born: Option<f64>,
@@ -18,7 +18,7 @@ pub struct ToastState {
 }
 
 impl ToastState {
-    pub fn new(icon: Option<Icon>, text: String) -> Self {
+    pub(crate) fn new(icon: Option<Icon>, text: String) -> Self {
         Self { icon, text, born: None, t: Spring::new(0.0), y: Spring::default(), key: 0 }
     }
 }
@@ -63,7 +63,7 @@ pub(crate) fn show_toasts(ctx: &mut Context) {
     g.material.shadow_radius = 22.0;
     g.material.blur = 6.0;
     let a = ctx.prepare_glass(Id::new("toasts"), &mut g, false);
-    let c = a.surface().text();
+    let c = a.surface().text_color();
     let mut p = ctx.painter(layer, Rect::EVERYTHING);
     p.glass(&g);
     for (r, l, icon, t, iw) in faces {

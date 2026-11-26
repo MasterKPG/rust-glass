@@ -5,16 +5,22 @@ use zeno::{Cap, Fill, Join, Mask, Stroke, Transform};
 
 macro_rules! icons {
     ($($name:ident: $($kind:ident $path:literal),+;)*) => {
+        /// An icon of the built in set. Draw it with
+        /// [`Painter::icon`](crate::Painter::icon) or on a button.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[allow(missing_docs)]
         pub enum Icon { $($name),* }
 
         impl Icon {
+            /// Every icon, in the order they are defined.
             pub const ALL: &'static [Icon] = &[$(Icon::$name),*];
 
             fn parts(self) -> &'static [Part] {
                 match self { $(Icon::$name => &[$(Part::$kind($path)),+]),* }
             }
 
+            /// Returns the name, such as `"Plus"`. Buttons with only an icon use it
+            /// as their label for screen readers.
             pub fn name(self) -> &'static str {
                 match self { $(Icon::$name => stringify!($name)),* }
             }

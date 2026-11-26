@@ -15,7 +15,7 @@ struct SliderScene {
 
 impl App for SliderScene {
     fn update(&mut self, ctx: &mut Context, _: &FrameInfo) {
-        ctx.clear = Color::hex(0xD8D8D8);
+        ctx.clear_color = Color::hex(0xD8D8D8);
         let c = ctx.screen.center();
         let w = 953.0 / PPP;
         let r = Rect::from_center_size(c + vec2(-2.0, 2.0), vec2(w, 36.0));
@@ -37,7 +37,7 @@ struct SegmentScene {
 
 impl App for SegmentScene {
     fn update(&mut self, ctx: &mut Context, _: &FrameInfo) {
-        ctx.clear = Color::hex(0xDCDCDC);
+        ctx.clear_color = Color::hex(0xDCDCDC);
         let w = 717.0 / PPP;
         let h = 150.0 / PPP;
         let k = h / 34.0;
@@ -61,7 +61,7 @@ struct TabScene {
 
 impl App for TabScene {
     fn update(&mut self, ctx: &mut Context, _: &FrameInfo) {
-        ctx.clear = Color::hex(0xEFEFEF);
+        ctx.clear_color = Color::hex(0xEFEFEF);
         let s = ctx.screen;
         let w = s.width();
         let mut p = ctx.background();

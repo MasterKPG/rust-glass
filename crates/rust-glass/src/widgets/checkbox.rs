@@ -26,7 +26,7 @@ impl<'a> Checkbox<'a> {
 impl Widget for Checkbox<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let b = 22.0;
-        let st = TextStyle::new(ui.ctx.theme.body);
+        let st = TextStyle::new(ui.ctx.theme.body_size);
         let l = ui.layout_text(self.label, &st);
         let mut r = ui.allocate_response(vec2(b + 9.0 + l.size.x, 28.0), Sense::Click);
         ui.ctx.focusable(r.id);
@@ -44,7 +44,7 @@ impl Widget for Checkbox<'_> {
         let t = ui.ctx.animate_bool(r.id.with("on"), *self.on, Tuning::new(0.32, 0.62));
         let c = Rect::from_center_size(
             vec2(r.rect.min.x + b * 0.5, r.rect.center().y),
-            Vec2::splat(b * (1.0 + 0.12 * gel.press)),
+            Vec2::splat(b * (1.0 + 0.12 * gel.amount)),
         );
         check_face(ui, &r, &gel, c, Corner::Radius(7.0), t);
         // Tick drawn stroke by stroke.
@@ -52,7 +52,7 @@ impl Widget for Checkbox<'_> {
         let p0 = c.center() + vec2(-5.0, 0.4);
         let p1 = c.center() + vec2(-1.5, 4.0);
         let p2 = c.center() + vec2(5.2, -4.0);
-        let tc = ui.surface.text();
+        let tc = ui.surface.text_color();
         let mut p = ui.painter();
         if k > 0.02 {
             let a = (k / 0.4).min(1.0);
@@ -73,7 +73,7 @@ fn check_face(ui: &mut Ui, r: &Response, gel: &PressEffect, c: Rect, corner: Cor
     let accent = ui.ctx.theme.accent;
     let t = t.clamp(0.0, 1.0);
     if ui.surface.is_glass() {
-        let f = ui.surface.fill_strong();
+        let f = ui.surface.strong_fill_color();
         let mut p = ui.painter();
         p.fill(c, corner, f.lerp(accent, t));
         return;
@@ -88,7 +88,7 @@ fn check_face(ui: &mut Ui, r: &Response, gel: &PressEffect, c: Rect, corner: Cor
     m.tint = Some(accent.alpha(0.92 * t));
     let mut g = Glass::new(c, corner, m);
     ui.ctx.prepare_glass(r.id, &mut g, true);
-    g.brightness = 0.05 * gel.press.max(0.0);
+    g.brightness = 0.05 * gel.amount.max(0.0);
     ui.painter().glass(&g);
 }
 
@@ -109,7 +109,7 @@ impl<'a> Radio<'a> {
 impl Widget for Radio<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let b = 22.0;
-        let st = TextStyle::new(ui.ctx.theme.body);
+        let st = TextStyle::new(ui.ctx.theme.body_size);
         let l = ui.layout_text(self.label, &st);
         let r = ui.allocate_response(vec2(b + 9.0 + l.size.x, 28.0), Sense::Click);
         ui.ctx.focusable(r.id);
@@ -123,10 +123,10 @@ impl Widget for Radio<'_> {
         let t = ui.ctx.animate_bool(r.id.with("on"), self.selected, Tuning::new(0.34, 0.55));
         let c = Rect::from_center_size(
             vec2(r.rect.min.x + b * 0.5, r.rect.center().y),
-            Vec2::splat(b * (1.0 + 0.12 * gel.press)),
+            Vec2::splat(b * (1.0 + 0.12 * gel.amount)),
         );
         check_face(ui, &r, &gel, c, Corner::Capsule, t);
-        let tc = ui.surface.text();
+        let tc = ui.surface.text_color();
         let mut p = ui.painter();
         let dot = Rect::from_center_size(c.center(), Vec2::splat((8.5 * t).max(0.0)));
         p.fill(dot, Corner::Circular(10.0), Color::white(t.clamp(0.0, 1.0)));
@@ -137,9 +137,11 @@ impl Widget for Radio<'_> {
 }
 
 impl Ui<'_> {
+    /// Adds a checkbox for `on`.
     pub fn checkbox(&mut self, on: &mut bool, label: &str) -> Response {
         self.add(Checkbox::new(on, label))
     }
+    /// Adds a radio button that sets `value` to `this` when clicked.
     pub fn radio<T: PartialEq>(&mut self, value: &mut T, this: T, label: &str) -> Response {
         let mut r = self.add(Radio::new(*value == this, label));
         if r.clicked {

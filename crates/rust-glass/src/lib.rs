@@ -33,6 +33,8 @@
 //!
 //! The [`guide`] explains layout, widgets, theming, materials and testing.
 
+#![warn(missing_docs)]
+
 pub mod accessibility;
 pub mod animation;
 pub mod app;

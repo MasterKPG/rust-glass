@@ -22,21 +22,26 @@ pub struct MenuItem<'a> {
 }
 
 impl<'a> MenuItem<'a> {
+    /// Creates a menu item.
     pub fn new(label: &'a str) -> Self {
         Self { label, icon: None, shortcut: "", checked: false, destructive: false }
     }
-    pub fn icon(mut self, i: Icon) -> Self {
-        self.icon = Some(i);
+    /// Shows `icon` before the label.
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
         self
     }
-    pub fn shortcut(mut self, s: &'a str) -> Self {
-        self.shortcut = s;
+    /// Shows a keyboard shortcut at the end, such as `Ctrl N`. It is only a label.
+    pub fn shortcut(mut self, shortcut: &'a str) -> Self {
+        self.shortcut = shortcut;
         self
     }
-    pub fn checked(mut self, c: bool) -> Self {
-        self.checked = c;
+    /// Shows a check mark when `checked`.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
         self
     }
+    /// Shows the item in red, for actions that delete something.
     pub fn destructive(mut self) -> Self {
         self.destructive = true;
         self
@@ -64,11 +69,11 @@ impl Widget for MenuItem<'_> {
             r.clicked = true;
         }
         let h = ui.ctx.animate_bool(r.id, r.hovered, Tuning::SNAP);
-        let st = TextStyle::new(ui.ctx.theme.body).weight(Weight::Medium);
+        let st = TextStyle::new(ui.ctx.theme.body_size).weight(Weight::Medium);
         let l = ui.layout_text(self.label, &st);
-        let s = ui.layout_text(self.shortcut, &TextStyle::new(ui.ctx.theme.caption));
-        let c = if self.destructive { Color::RED } else { ui.surface.text() };
-        let (fill, sec) = (ui.surface.fill(), ui.surface.secondary());
+        let s = ui.layout_text(self.shortcut, &TextStyle::new(ui.ctx.theme.caption_size));
+        let c = if self.destructive { Color::RED } else { ui.surface.text_color() };
+        let (fill, sec) = (ui.surface.fill_color(), ui.surface.secondary_color());
         if r.hovered {
             ui.ctx.cursor = Cursor::Pointer;
         }
@@ -92,7 +97,8 @@ impl Widget for MenuItem<'_> {
     }
 }
 
-/// Button whose surface turns into the menu.
+/// A button that opens a menu. Its glass grows into the menu, and the menu
+/// flows back into the button when it closes.
 pub struct MenuButton<'a> {
     label: &'a str,
     icon: Option<Icon>,
@@ -102,29 +108,37 @@ pub struct MenuButton<'a> {
 }
 
 impl<'a> MenuButton<'a> {
+    /// Creates a menu button. Leave `label` empty for an icon only button.
     pub fn new(label: &'a str) -> Self {
         Self { label, icon: None, chevron: false, width: 230.0, min_width: 0.0 }
     }
-    pub fn icon(mut self, i: Icon) -> Self {
-        self.icon = Some(i);
+    /// Shows `icon` before the label.
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
         self
     }
+    /// Shows an up and down chevron at the end, as on a combo box.
     pub fn chevron(mut self) -> Self {
         self.chevron = true;
         self
     }
-    /// Width of the menu.
-    pub fn menu_width(mut self, w: f32) -> Self {
-        self.width = w;
+    /// Sets the width of the menu. The default is 230.
+    pub fn menu_width(mut self, width: f32) -> Self {
+        self.width = width;
         self
     }
-    pub fn min_width(mut self, w: f32) -> Self {
-        self.min_width = w;
+    /// Makes the button at least `width` points wide. Its label then starts
+    /// at the left.
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
         self
     }
 
+    /// Shows the button, and the menu items drawn by `f` while it is open.
+    /// Close the menu with [`Context::set_popup`](crate::Context::set_popup)
+    /// on the returned id when an item is clicked.
     pub fn show(self, ui: &mut Ui, f: impl FnOnce(&mut Ui)) -> Response {
-        let st = TextStyle::new(ui.ctx.theme.body).weight(Weight::Semibold);
+        let st = TextStyle::new(ui.ctx.theme.body_size).weight(Weight::Semibold);
         let l = ui.layout_text(self.label, &st);
         let h = ui.ctx.theme.control_height;
         let has_text = !self.label.is_empty();
@@ -150,7 +164,7 @@ impl<'a> MenuButton<'a> {
         let fade = 1.0 - smoothstep(0.0, 0.35, t);
         let mut s = ui.surface;
         if ui.surface.is_glass() {
-            let c = s.fill();
+            let c = s.fill_color();
             ui.painter().fill(gel.rect, Corner::Capsule, c.fade(fade * (1.0 + 0.5 * gel.hover)));
         } else {
             let mut g = Glass::new(gel.rect, Corner::Capsule, ui.ctx.theme.regular);
@@ -159,7 +173,7 @@ impl<'a> MenuButton<'a> {
             g.presence = fade;
             ui.painter().glass(&g);
         }
-        let c = s.text().fade(fade);
+        let c = s.text_color().fade(fade);
         let content = l.size.x + iw + gap + cw;
         let k = gel.scale;
         let mut x = if self.min_width > 0.0 && has_text {
@@ -168,7 +182,7 @@ impl<'a> MenuButton<'a> {
             gel.rect.center().x - content * k * 0.5
         };
         let cy = gel.rect.center().y;
-        let sec = s.secondary().fade(fade);
+        let sec = s.secondary_color().fade(fade);
         let mut p = ui.painter();
         if let Some(i) = self.icon {
             p.icon(vec2(x + iw * k * 0.5, cy), 17.0 * k, i, c);

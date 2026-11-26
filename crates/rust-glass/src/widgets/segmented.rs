@@ -25,23 +25,28 @@ pub struct Segmented<'a> {
 }
 
 impl<'a> Segmented<'a> {
+    /// Creates a control that sets `selected` to the index of the chosen label.
     pub fn new(selected: &'a mut usize, labels: &'a [&'a str]) -> Self {
         Self { selected, labels, width: None, scale: 1.0, knob: None, track: None, fit: false }
     }
-    pub fn width(mut self, w: f32) -> Self {
-        self.width = Some(w);
+    /// Sets the width. The default fits the labels.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
-    pub fn scale(mut self, s: f32) -> Self {
-        self.scale = s;
+    /// Scales the whole control.
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
         self
     }
-    pub fn thumb_color(mut self, c: Color) -> Self {
-        self.knob = Some(c);
+    /// Sets the color of the thumb at rest.
+    pub fn thumb_color(mut self, color: Color) -> Self {
+        self.knob = Some(color);
         self
     }
-    pub fn track_color(mut self, c: Color) -> Self {
-        self.track = Some(c);
+    /// Sets the color of the track.
+    pub fn track_color(mut self, color: Color) -> Self {
+        self.track = Some(color);
         self
     }
     /// Segments as wide as their label instead of equal.
@@ -153,10 +158,10 @@ impl Widget for Segmented<'_> {
         let thumb = thumb_rect(ui.ctx, vec2(ox + d.pos.value, rect.center().y), &f);
         let lift = f.lift.clamp(0.0, 1.0);
         let knob =
-            self.knob.unwrap_or(if ui.surface.dark() > 0.5 { Color::gray(0.42) } else { Color::WHITE });
-        let track_c = self.track.unwrap_or(ui.surface.fill());
-        let text_c = Color::BLACK.lerp(Color::WHITE, ui.surface.dark());
-        let quiet_c = ui.surface.secondary().fade(0.78);
+            self.knob.unwrap_or(if ui.surface.darkness() > 0.5 { Color::gray(0.42) } else { Color::WHITE });
+        let track_c = self.track.unwrap_or(ui.surface.fill_color());
+        let text_c = Color::BLACK.lerp(Color::WHITE, ui.surface.darkness());
+        let quiet_c = ui.surface.secondary_color().fade(0.78);
         // The face is painted as a separate platter below the labels, so the
         // labels stay sharp on top of it and both bend in the lens.
         let mut glass = thumb_glass(ui.ctx, thumb, &f, knob, k);
@@ -176,7 +181,7 @@ impl Widget for Segmented<'_> {
         glass.material.dark_range.0 = 0.0;
         let grow = 1.0 + 0.15 * lift;
         // How much of the platter stays under the lifted lens.
-        let clear = lerp(0.68, 0.92, ui.ctx.theme.tinted());
+        let clear = lerp(0.68, 0.92, ui.ctx.theme.tint_above_default());
 
         let mut p = ui.painter();
         p.fill(rect, Corner::Capsule, track_c);
@@ -200,6 +205,8 @@ impl Widget for Segmented<'_> {
 }
 
 impl Ui<'_> {
+    /// Adds a segmented control that sets `selected` to the index of the
+    /// chosen label.
     pub fn segmented(&mut self, selected: &mut usize, labels: &[&str]) -> Response {
         self.add(Segmented::new(selected, labels))
     }

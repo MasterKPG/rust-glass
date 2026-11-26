@@ -18,22 +18,28 @@ pub struct Window<'a> {
 }
 
 impl<'a> Window<'a> {
+    /// Creates a window. The title also identifies it, so keep it unique.
     pub fn new(title: &'a str) -> Self {
         Self { title, pos: vec2(80.0, 80.0), width: 280.0, open: None }
     }
-    pub fn pos(mut self, p: Vec2) -> Self {
-        self.pos = p;
+    /// Sets where the window first appears.
+    pub fn pos(mut self, position: Vec2) -> Self {
+        self.pos = position;
         self
     }
-    pub fn width(mut self, w: f32) -> Self {
-        self.width = w;
+    /// Sets the width. The height follows the content.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
         self
     }
-    pub fn open(mut self, o: &'a mut bool) -> Self {
-        self.open = Some(o);
+    /// Adds a close button that sets `open` to `false`. The window shows
+    /// while `open` is `true`.
+    pub fn open(mut self, open: &'a mut bool) -> Self {
+        self.open = Some(open);
         self
     }
 
+    /// Shows the window with the content drawn by `f`.
     pub fn show(self, ctx: &mut Context, f: impl FnOnce(&mut Ui)) {
         #[derive(Clone, Copy)]
         struct St {
@@ -105,7 +111,7 @@ impl<'a> Window<'a> {
         let mut p = ctx.painter(layer, Rect::EVERYTHING);
         p.glass(&g);
         p.opacity = op;
-        p.text_centered(Rect::from_min_size(r.min, vec2(self.width, bar_h)), &title, surf.text(), 1.0);
+        p.text_centered(Rect::from_min_size(r.min, vec2(self.width, bar_h)), &title, surf.text_color(), 1.0);
 
         // Close and collapse buttons.
         let mk = |x: f32| Rect::from_center_size(vec2(x, r.min.y + bar_h * 0.5), Vec2::splat(24.0));
@@ -119,13 +125,13 @@ impl<'a> Window<'a> {
             let gel = PressEffect::update(ctx, &res, 1.0);
             let mut p = ctx.painter(layer, Rect::EVERYTHING);
             p.opacity = op;
-            p.fill(gel.rect, Corner::Capsule, surf.fill().fade(1.0 + gel.hover));
+            p.fill(gel.rect, Corner::Capsule, surf.fill_color().fade(1.0 + gel.hover));
             if what == 0 {
-                p.icon(gel.rect.center(), 13.0 * gel.scale, Icon::Close, surf.text());
+                p.icon(gel.rect.center(), 13.0 * gel.scale, Icon::Close, surf.text_color());
                 close |= res.clicked;
             } else {
                 let i = if s.folded { Icon::ChevronDown } else { Icon::ChevronUp };
-                p.icon(gel.rect.center(), 13.0 * gel.scale, i, surf.text());
+                p.icon(gel.rect.center(), 13.0 * gel.scale, i, surf.text_color());
                 if res.clicked {
                     s.folded = !s.folded;
                 }

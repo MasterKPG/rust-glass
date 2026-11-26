@@ -1,5 +1,5 @@
-//! Per window state: input routing, animation memory, layers and backdrop
-//! measurements.
+//! The state of one window: input, theme, layers, widget memory and the
+//! measurements glass adapts to.
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -15,81 +15,124 @@ use crate::paint::{ImageId, Paint, Painter};
 use crate::text::{TextEngine, TextStyle, Weight};
 use crate::theme::{Surface, Theme};
 
+/// Identifies a widget across frames, so it can keep state such as an
+/// animation or a scroll position.
+///
+/// Ids are hashes. Widgets added to a [`Ui`](crate::Ui) get one from their
+/// position automatically. Give your own with [`Id::new`] when the widget
+/// can move in the layout, for example in a list that reorders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id(pub u64);
 
 impl Id {
-    pub fn new(v: impl Hash) -> Self {
+    /// Creates an id from any hashable value.
+    pub fn new(source: impl Hash) -> Self {
         let mut h = std::hash::DefaultHasher::new();
-        v.hash(&mut h);
+        source.hash(&mut h);
         Id(h.finish())
     }
-    pub fn with(self, v: impl Hash) -> Self {
+    /// Derives a child id, for a part of this widget.
+    pub fn with(self, source: impl Hash) -> Self {
         let mut h = std::hash::DefaultHasher::new();
         self.0.hash(&mut h);
-        v.hash(&mut h);
+        source.hash(&mut h);
         Id(h.finish())
     }
 }
 
-/// Stacking order of layers.
+/// Where a layer sits in the stack. Later orders draw on top and get input
+/// first. Within one order, the layer used or clicked last is on top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Order {
+    /// Behind everything, such as a wallpaper.
     Background,
+    /// The app content.
     Content,
-    /// Floating bars: toolbars, tab bars, sidebars.
+    /// Floating bars: toolbars, tab bars and sidebars.
     Bar,
+    /// Floating windows.
     Window,
+    /// Alerts and sheets, which block everything below.
     Modal,
+    /// Menus and other popups.
     Popup,
+    /// Toasts.
     Toast,
+    /// Tooltips and items being dragged.
     Tooltip,
 }
 
+/// What a widget reacts to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sense {
-    /// Blocks widgets below, reacts to hover only.
+    /// Only hovering. It still blocks the widgets below it.
     Hover,
+    /// Clicks.
     Click,
+    /// Clicks and drags.
     Drag,
 }
 
+/// The mouse cursor shape. Set [`Context::cursor`] while drawing a widget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Cursor {
+    /// The arrow.
     #[default]
     Default,
+    /// A hand, for things that can be clicked.
     Pointer,
+    /// A text cursor.
     Text,
+    /// For things that can be dragged.
     Grab,
-    ResizeH,
+    /// A horizontal resize arrow.
+    ResizeHorizontal,
+    /// The widget is disabled.
     NotAllowed,
 }
 
+/// What happened to a widget this frame.
 #[derive(Clone, Copy, Debug)]
 pub struct Response {
+    /// The widget's id.
     pub id: Id,
+    /// Where the widget is.
     pub rect: Rect,
+    /// The pointer is over the widget and nothing else is being dragged.
     pub hovered: bool,
-    /// Pointer is down and started on this widget.
+    /// The pointer is down and the press started on this widget.
     pub held: bool,
+    /// The press started on this widget this frame.
     pub pressed: bool,
+    /// A press that started on this widget ended this frame.
     pub released: bool,
+    /// The widget was clicked, with the pointer, the keyboard or a screen
+    /// reader.
     pub clicked: bool,
+    /// The press this frame is the second of a double click.
     pub double_clicked: bool,
+    /// The secondary button was pressed over the widget.
     pub secondary_clicked: bool,
+    /// The widget has keyboard focus.
     pub focused: bool,
+    /// The value the widget edits changed this frame.
     pub changed: bool,
+    /// How far the pointer moved while held.
     pub delta: Vec2,
+    /// Pointer position, if the pointer is in the window.
     pub pointer: Option<Vec2>,
 }
 
 impl Response {
+    /// Returns [`Response::clicked`].
     pub fn clicked(&self) -> bool {
         self.clicked
     }
+    /// Returns [`Response::changed`].
     pub fn changed(&self) -> bool {
         self.changed
     }
+    /// Returns [`Response::hovered`].
     pub fn hovered(&self) -> bool {
         self.hovered
     }
@@ -124,26 +167,31 @@ struct Adapt {
     used: u64,
 }
 
-/// Result of [`Context::adapt`].
+/// How a glass element should look over what is behind it. Returned by
+/// [`Context::backdrop`] and [`Context::prepare_glass`].
 #[derive(Clone, Copy, Debug)]
 pub struct Backdrop {
-    /// 0 light glass with dark labels, 1 dark glass with light labels.
-    pub dark: f32,
-    /// Extra shadow over busy content.
-    pub boost: f32,
+    /// 0 for light glass with dark labels, 1 for dark glass with light labels.
+    pub darkness: f32,
+    /// Extra shadow over busy content, from 0 to 1.
+    pub shadow_boost: f32,
 }
 
 impl Backdrop {
+    /// Returns the surface for content drawn on this glass.
     pub fn surface(&self) -> Surface {
-        Surface::Glass { dark: self.dark }
+        Surface::Glass { dark: self.darkness }
     }
 }
 
-/// Requests from the UI to the host window.
+/// A request from the UI to the window host, handled after the frame.
 #[derive(Clone, Debug)]
 pub enum HostCommand {
+    /// Put text on the clipboard.
     Copy(String),
+    /// Open a web address in the default browser.
     OpenUrl(String),
+    /// Close the window and end [`run`](crate::run).
     Close,
 }
 
@@ -154,24 +202,40 @@ pub(crate) struct ImageUpload {
     pub rgba: Vec<u8>,
 }
 
+/// The state of one window. Every widget reads and writes it.
+///
+/// [`App::update`](crate::App::update) gets it each frame. Most code reaches
+/// it through [`Ui::ctx`](crate::Ui::ctx).
 pub struct Context {
+    /// Input of the current frame.
     pub input: Input,
+    /// Appearance and accessibility settings.
     pub theme: Theme,
     pub(crate) paint: Paint,
+    /// Text layout and fonts.
     pub text: TextEngine,
+    /// Seconds since the app started.
     pub time: f64,
+    /// Seconds since the last frame, at most 1/24 so an idle gap does not
+    /// turn into one big animation step.
     pub dt: f32,
+    /// Number of the current frame.
     pub frame: u64,
+    /// The window, in points. Its top left corner is `(0, 0)`.
     pub screen: Rect,
+    /// Physical pixels per point, from the display scale.
     pub pixels_per_point: f32,
-    pub clear: Color,
+    /// Color behind everything.
+    pub clear_color: Color,
+    /// Mouse cursor for this frame. Widgets set it while hovered.
     pub cursor: Cursor,
+    /// Requests to the window host, handled after the frame.
     pub host_commands: Vec<HostCommand>,
     pub(crate) uploads: Vec<ImageUpload>,
     pub(crate) removed_images: Vec<ImageId>,
     /// Caret of the focused text field, where an input method shows its
-    /// candidates. Set by the field every frame it has focus.
-    pub ime: Option<Rect>,
+    /// candidates. The field sets it every frame it has focus.
+    pub ime_area: Option<Rect>,
     next_image: u32,
     states: HashMap<(Id, TypeId), (Box<dyn Any>, u64)>,
     layers: Vec<Layer>,
@@ -214,6 +278,7 @@ impl Default for Context {
 }
 
 impl Context {
+    /// Creates the state of a window with the default theme.
     pub fn new() -> Self {
         Self {
             input: Input::new(),
@@ -225,12 +290,12 @@ impl Context {
             frame: 0,
             screen: Rect::default(),
             pixels_per_point: 1.0,
-            clear: Color::gray(0.85),
+            clear_color: Color::gray(0.85),
             cursor: Cursor::Default,
             host_commands: Vec::new(),
             uploads: Vec::new(),
             removed_images: Vec::new(),
-            ime: None,
+            ime_area: None,
             next_image: 1,
             states: HashMap::new(),
             layers: Vec::new(),
@@ -260,6 +325,9 @@ impl Context {
 
     // ----- frame -----
 
+    /// Starts a frame of `size` points at `pixels_per_point`, `time` seconds after
+    /// the start, with the input `events`. The window host and
+    /// [`Headless`](crate::headless::Headless) call it for you.
     pub fn begin_frame(&mut self, size: Vec2, ppp: f32, time: f64, events: &[Event]) {
         // A long idle gap must not turn into one huge animation step.
         self.dt = ((time - self.time) as f32).clamp(0.0, 1.0 / 24.0);
@@ -270,7 +338,7 @@ impl Context {
         self.cursor = Cursor::Default;
         self.repaint = false;
         self.relayout = false;
-        self.ime = None;
+        self.ime_area = None;
         self.input.begin(events, time);
         self.access.nodes.clear();
         self.access.requests.clear();
@@ -282,7 +350,7 @@ impl Context {
         self.paint.begin(ppp);
         self.paint.glass_tint = self.theme.glass_tint;
         self.paint.reduce_transparency = self.theme.reduce_transparency;
-        self.paint.high_contrast = self.theme.high_contrast;
+        self.paint.increase_contrast = self.theme.increase_contrast;
         self.text.begin_frame(ppp);
 
         std::mem::swap(&mut self.hits, &mut self.prev_hits);
@@ -364,6 +432,8 @@ impl Context {
         }
     }
 
+    /// Ends the frame and builds the draw list. The window host and
+    /// [`Headless`](crate::headless::Headless) call it for you.
     pub fn end_frame(&mut self) {
         crate::widgets::toast::show_toasts(self);
         if self.input.released || !self.input.down {
@@ -391,7 +461,7 @@ impl Context {
         self.drawn = order;
         let a = self.light.value;
         let d = &mut self.paint.data;
-        d.clear = self.clear.to_array();
+        d.clear = self.clear_color.to_array();
         d.light = [a.sin(), -a.cos()];
         d.time = self.time as f32;
         d.ppp = self.pixels_per_point;
@@ -400,33 +470,38 @@ impl Context {
         }
     }
 
-    /// Keep animating: draw another frame as soon as possible.
+    /// Asks for another frame as soon as possible. Call it every frame while
+    /// something animates. An idle window draws nothing.
     pub fn request_repaint(&mut self) {
         self.repaint = true;
     }
+    /// Returns `true` if another frame was asked for.
     pub fn wants_repaint(&self) -> bool {
         self.repaint
     }
-    /// Sizes used for layout were guessed. The frame is run again before it is
-    /// shown.
+    /// Tells the host that sizes used for layout this frame were guesses. The
+    /// frame runs again before it is shown.
     pub fn request_relayout(&mut self) {
         self.relayout = true;
     }
+    /// Returns `true` if the frame should run again before it is shown.
     pub fn wants_relayout(&self) -> bool {
         self.relayout
     }
 
-    /// Device tilt in radians, turns the highlights.
-    pub fn set_tilt(&mut self, t: Vec2) {
-        self.tilt = t;
+    /// Sets the tilt of the device in radians. It turns the highlights on glass.
+    pub fn set_tilt(&mut self, tilt: Vec2) {
+        self.tilt = tilt;
     }
+    /// Adds to the movement that briefly turns the highlights while scrolling.
     pub fn add_scroll_energy(&mut self, v: f32) {
         self.scroll_energy = (self.scroll_energy + v).clamp(-1.0, 1.0);
     }
 
     // ----- memory -----
 
-    /// Copy of the state stored for a widget.
+    /// Returns a copy of the state stored for `id`, or the default if there is
+    /// none.
     pub fn get<T: Clone + Default + 'static>(&mut self, id: Id) -> T {
         let f = self.frame;
         match self.states.get_mut(&(id, TypeId::of::<T>())) {
@@ -437,53 +512,61 @@ impl Context {
             None => T::default(),
         }
     }
+    /// Returns a copy of the state stored for `id`, if there is any.
     pub fn try_get<T: Clone + 'static>(&mut self, id: Id) -> Option<T> {
         let f = self.frame;
         let (b, used) = self.states.get_mut(&(id, TypeId::of::<T>()))?;
         *used = f;
         b.downcast_ref::<T>().cloned()
     }
-    /// Move the state out, leaving nothing stored. Cheaper than [`Self::get`]
-    /// for large state; put it back with [`Self::set`].
+    /// Moves the state out, leaving nothing stored. Cheaper than [`Self::get`] for
+    /// large state. Put it back with [`Self::set`].
     pub fn take<T: Default + 'static>(&mut self, id: Id) -> T {
         match self.states.remove(&(id, TypeId::of::<T>())) {
             Some((b, _)) => b.downcast::<T>().map(|b| *b).unwrap_or_default(),
             None => T::default(),
         }
     }
-    pub fn set<T: 'static>(&mut self, id: Id, v: T) {
-        self.states.insert((id, TypeId::of::<T>()), (Box::new(v), self.frame));
+    /// Stores state for `id`. State that is not used for a while is dropped.
+    pub fn set<T: 'static>(&mut self, id: Id, value: T) {
+        self.states.insert((id, TypeId::of::<T>()), (Box::new(value), self.frame));
     }
 
-    /// Spring driven value stored under `id`.
-    pub fn animate(&mut self, id: Id, target: f32, t: Tuning) -> f32 {
+    /// Moves a value stored under `id` towards `target` on a spring and returns
+    /// it. Keeps asking for frames until it arrives.
+    pub fn animate(&mut self, id: Id, target: f32, tuning: Tuning) -> f32 {
         let mut s: Spring = self.get(id);
-        if s.step(target, self.tuning(t), self.dt) {
+        if s.step(target, self.tuning(tuning), self.dt) {
             self.repaint = true;
         }
         self.set(id, s);
         s.value
     }
-    pub fn animate_bool(&mut self, id: Id, on: bool, t: Tuning) -> f32 {
-        self.animate(id, on as u32 as f32, t)
+    /// Like [`Self::animate`], towards 1 when `on` and 0 when off.
+    pub fn animate_bool(&mut self, id: Id, on: bool, tuning: Tuning) -> f32 {
+        self.animate(id, on as u32 as f32, tuning)
     }
-    pub fn animate_vec2(&mut self, id: Id, target: Vec2, t: Tuning) -> Spring2d {
+    /// Like [`Self::animate`], for a point. Returns the spring, so you can read
+    /// its velocity too.
+    pub fn animate_vec2(&mut self, id: Id, target: Vec2, tuning: Tuning) -> Spring2d {
         let mut s: Spring2d = self.get(id);
-        if s.step(target, self.tuning(t), self.dt) {
+        if s.step(target, self.tuning(tuning), self.dt) {
             self.repaint = true;
         }
         self.set(id, s);
         s
     }
 
-    /// Remove the elastic part when motion is reduced.
-    pub fn tuning(&self, t: Tuning) -> Tuning {
-        if self.theme.reduce_motion { Tuning::new(t.response.min(0.25), 1.0) } else { t }
+    /// Returns `tuning` as it should be used: unchanged, or short and without
+    /// overshoot when [`Theme::reduce_motion`] is on.
+    pub fn tuning(&self, tuning: Tuning) -> Tuning {
+        if self.theme.reduce_motion { Tuning::new(tuning.response.min(0.25), 1.0) } else { tuning }
     }
 
     // ----- layers -----
 
-    /// Index of a layer, created on first use.
+    /// Returns the index of the layer `id`, created on first use. Layers draw in
+    /// [`Order`], and within an order the one used or clicked last is on top.
     pub fn layer(&mut self, id: Id, order: Order) -> usize {
         let i = match self.layers.iter().position(|l| l.id == id) {
             Some(i) => i,
@@ -515,12 +598,13 @@ impl Context {
         i
     }
 
+    /// Returns a painter for `layer` that clips to `clip`.
     pub fn painter(&mut self, layer: usize, clip: Rect) -> Painter<'_> {
         self.paint.ensure_layer(layer);
         Painter { paint: &mut self.paint, text: &mut self.text, layer, clip, mask: 0, opacity: 1.0 }
     }
 
-    /// Painter for the whole window behind all widgets.
+    /// Returns a painter for the whole window, behind all widgets.
     pub fn background(&mut self) -> Painter<'_> {
         let l = self.layer(Id::new("background"), Order::Background);
         // The scene texture is padded; cover that too.
@@ -530,6 +614,9 @@ impl Context {
 
     // ----- input -----
 
+    /// Registers `rect` on `layer` for input and returns what happened to it.
+    /// Parts outside `clip` do not react. Only the topmost widget under the
+    /// pointer is hovered.
     pub fn interact(&mut self, id: Id, rect: Rect, clip: Rect, layer: usize, sense: Sense) -> Response {
         let visible = rect.intersect(clip);
         if visible.is_positive() {
@@ -551,8 +638,8 @@ impl Context {
             pressed: held && self.input.pressed,
             released: held && self.input.released,
             clicked: (held && self.input.released && hovered && sense != Sense::Hover) || key_click,
-            double_clicked: held && self.input.pressed && self.input.double,
-            secondary_clicked: hovered && self.input.secondary,
+            double_clicked: held && self.input.pressed && self.input.double_clicked,
+            secondary_clicked: hovered && self.input.secondary_clicked,
             focused,
             changed: false,
             delta: if held { self.input.delta } else { Vec2::ZERO },
@@ -560,7 +647,8 @@ impl Context {
         }
     }
 
-    /// Register a widget for keyboard focus. Call every frame it is visible.
+    /// Lets `id` take keyboard focus with Tab. Call it every frame the widget is
+    /// visible.
     pub fn focusable(&mut self, id: Id) {
         self.focus_list.push(id);
         if self.access.on
@@ -572,11 +660,13 @@ impl Context {
             self.focus_seen = true;
         }
     }
+    /// Gives keyboard focus to `id`, or takes it away with `None`.
     pub fn set_focus(&mut self, id: Option<Id>) {
         self.focus = id;
         self.focus_seen = true;
     }
-    /// Focus ring should be drawn.
+    /// Returns `true` if `id` has focus from the keyboard, which is when the focus
+    /// ring shows.
     pub fn shows_focus(&self, id: Id) -> bool {
         self.focus == Some(id) && self.focus_by_key
     }
@@ -595,14 +685,16 @@ impl Context {
         self.focus_by_key = true;
     }
 
-    /// Wheel movement for a scroll area on both axes.
+    /// Registers a scroll area and returns the wheel movement it receives, on
+    /// both axes.
     pub fn scroll_area(&mut self, id: Id, rect: Rect, layer: usize) -> Vec2 {
         self.scroll_area_axes(id, rect, layer, true, true)
     }
 
-    /// Wheel movement on the axes the area scrolls. The other axis goes to
-    /// the scroll area around it, so a horizontal row inside a page leaves
-    /// vertical scrolling to the page.
+    /// Registers a scroll area that scrolls on the given axes and returns the
+    /// wheel movement it receives. Movement on the other axis goes to the scroll
+    /// area around it, so a horizontal row inside a page leaves vertical scrolling
+    /// to the page.
     pub fn scroll_area_axes(&mut self, id: Id, rect: Rect, layer: usize, x: bool, y: bool) -> Vec2 {
         let scroll = x as u8 | (y as u8) << 1;
         self.hits.push(Hit { id, rect, layer, sense: Sense::Hover, scroll });
@@ -613,24 +705,27 @@ impl Context {
         )
     }
 
+    /// Returns `true` while `id` is being pressed or dragged.
     pub fn is_active(&self, id: Id) -> bool {
         self.active == Some(id)
     }
-    /// Take over the current drag.
+    /// Makes `id` the target of the current press or drag.
     pub fn grab(&mut self, id: Id) {
         self.active = Some(id);
     }
+    /// Returns `true` while any widget is being pressed or dragged.
     pub fn any_active(&self) -> bool {
         self.active.is_some()
     }
 
     // ----- glass -----
 
-    /// Adaptive state for a glass element. `flips` is false for large surfaces,
-    /// which keep the theme's appearance.
-    pub fn backdrop(&mut self, id: Id, flips: bool) -> Backdrop {
+    /// Returns how the glass element `id` should look over what is behind it.
+    /// With `adaptive` set, small elements switch between light and dark with the
+    /// backdrop. Large surfaces keep the theme appearance.
+    pub fn backdrop(&mut self, id: Id, adaptive: bool) -> Backdrop {
         let dark_theme = self.theme.dark;
-        let adaptive = self.theme.adaptive;
+        let theme_adaptive = self.theme.adaptive;
         let f = self.frame;
         let dt = self.dt;
         let a = self.adapt.entry(id.0).or_insert_with(|| Adapt {
@@ -639,7 +734,7 @@ impl Context {
             ..Default::default()
         });
         a.used = f;
-        if !flips || !adaptive {
+        if !adaptive || !theme_adaptive {
             a.is_dark = dark_theme;
         } else if a.known {
             // Hysteresis keeps the style stable over mid tones. Dark appearance
@@ -653,7 +748,8 @@ impl Context {
         }
         let mut moving = a.dark.step(a.is_dark as u32 as f32, Tuning::new(0.32, 1.0), dt);
         moving |= a.boost.step((a.dev * 4.0).min(1.0), Tuning::new(0.4, 1.0), dt);
-        let out = Backdrop { dark: a.dark.value.clamp(0.0, 1.0), boost: a.boost.value.clamp(0.0, 1.0) };
+        let out =
+            Backdrop { darkness: a.dark.value.clamp(0.0, 1.0), shadow_boost: a.boost.value.clamp(0.0, 1.0) };
         if moving {
             self.repaint = true;
         }
@@ -682,29 +778,31 @@ impl Context {
         changed
     }
 
-    /// Set the adaptive fields of `glass` and have its backdrop measured.
-    pub fn prepare_glass(&mut self, id: Id, glass: &mut Glass, flips: bool) -> Backdrop {
-        let a = self.backdrop(id, flips);
-        glass.darkness = a.dark;
-        glass.shadow_boost = a.boost;
+    /// Adapts `glass` to what is behind it and has the backdrop measured for the
+    /// next frame. Call it before painting glass you build yourself.
+    pub fn prepare_glass(&mut self, id: Id, glass: &mut Glass, adaptive: bool) -> Backdrop {
+        let a = self.backdrop(id, adaptive);
+        glass.darkness = a.darkness;
+        glass.shadow_boost = a.shadow_boost;
         glass.stat_key = Some(id.0);
         a
     }
 
     // ----- accessibility -----
 
-    /// Collect the accessibility tree. The window host turns this on when a
-    /// screen reader asks for the tree and off when it goes away.
+    /// Turns collecting the accessibility tree on or off. The window host turns it
+    /// on when a screen reader asks for the tree.
     pub fn set_accessibility(&mut self, on: bool) {
         self.access.on = on;
         self.repaint = true;
     }
+    /// Returns `true` while the accessibility tree is collected.
     pub fn accessibility(&self) -> bool {
         self.access.on
     }
 
-    /// Describe an element for assistive technology. Returns `None` while no
-    /// screen reader is listening, so building labels costs nothing then.
+    /// Describes an element for screen readers. Returns `None` while none is
+    /// listening, so building labels costs nothing then.
     /// [`Ui::access`](crate::Ui::access) fills in the layer for you.
     pub fn access_node(&mut self, id: Id, role: Role, rect: Rect, layer: usize) -> Option<&mut Node> {
         if !self.access.on {
@@ -717,17 +815,17 @@ impl Context {
         self.access.nodes.last_mut()
     }
 
-    /// Label the node `id` described in this frame, for widgets that have no
-    /// text of their own, such as sliders.
+    /// Labels the node `id` described this frame, for widgets without text of
+    /// their own, such as sliders.
     pub fn access_label(&mut self, id: Id, label: impl Into<String>) {
         if let Some(n) = self.access.nodes.iter_mut().rev().find(|n| n.id == id) {
             n.label = label.into();
         }
     }
 
-    /// Give every node described since `from` (an index into
-    /// [`Self::access_nodes`]) that has no label this one. Rows use it to name
-    /// the switch or slider at their end after their title.
+    /// Labels every node described since `from` (an index into
+    /// [`Self::access_nodes`]) that has no label yet. Settings rows use it to name
+    /// the switch or slider at their end.
     pub fn access_label_since(&mut self, from: usize, label: &str) {
         for n in self.access.nodes.iter_mut().skip(from) {
             if n.label.is_empty() && n.role != Role::Label {
@@ -736,17 +834,17 @@ impl Context {
         }
     }
 
-    /// Nodes described so far in this frame.
+    /// Returns the nodes described so far this frame.
     pub fn access_nodes(&self) -> &[Node] {
         &self.access.nodes
     }
 
-    /// The request was made for `id` this frame.
-    pub fn access_requested(&self, id: Id, a: &Action) -> bool {
-        self.access.requests.iter().any(|(i, x)| *i == id && x == a)
+    /// Returns `true` if a screen reader asked for `action` on `id` this frame.
+    pub fn access_requested(&self, id: Id, action: &Action) -> bool {
+        self.access.requests.iter().any(|(i, x)| *i == id && x == action)
     }
 
-    /// Text a screen reader wants to put into the field `id`.
+    /// Returns the text a screen reader wants to put into the field `id`.
     pub fn take_access_text(&mut self, id: Id) -> Option<String> {
         let i =
             self.access.requests.iter().position(|(i, a)| *i == id && matches!(a, Action::SetValue(_)))?;
@@ -756,7 +854,7 @@ impl Context {
         }
     }
 
-    /// Value a screen reader wants to give the slider or stepper `id`.
+    /// Returns the value a screen reader wants to give the slider or stepper `id`.
     pub fn take_access_number(&mut self, id: Id) -> Option<f64> {
         let i =
             self.access.requests.iter().position(|(i, a)| *i == id && matches!(a, Action::SetNumber(_)))?;
@@ -794,7 +892,7 @@ impl Context {
         self.access.requests.push((id, a));
     }
 
-    /// The full tree of the last frame, for AccessKit.
+    /// Returns the full accessibility tree of the last frame for AccessKit.
     pub fn access_update(&self, title: &str) -> accesskit::TreeUpdate {
         let layers: Vec<LayerInfo> = self
             .drawn
@@ -813,34 +911,37 @@ impl Context {
 
     // ----- drag and drop -----
 
-    /// Pick up `payload`. Usually called by [`Ui::drag_source`](crate::Ui::drag_source).
+    /// Picks up `payload`. [`Ui::drag_source`](crate::Ui::drag_source) calls it
+    /// for you.
     pub fn start_drag(&mut self, source: Id, payload: Box<dyn Any>, grab: Vec2, size: Vec2) {
         self.drag = Some(Drag { source, payload, grab, size });
         self.active = Some(source);
         self.repaint = true;
     }
-    /// Source of what is being dragged.
+    /// Returns the id of the widget being dragged.
     pub fn dragged_id(&self) -> Option<Id> {
         self.drag.as_ref().map(|d| d.source)
     }
-    /// Payload being dragged, if it has type `P`.
+    /// Returns the payload being dragged, if it has type `P`.
     pub fn dragged<P: Clone + 'static>(&self) -> Option<P> {
         self.drag.as_ref()?.payload.downcast_ref::<P>().cloned()
     }
-    /// Where the dragged item is drawn: pointer minus the grab offset.
+    /// Returns where the dragged item is drawn: at the pointer, keeping the
+    /// offset where it was grabbed.
     pub fn drag_rect(&self) -> Option<Rect> {
         let d = self.drag.as_ref()?;
         let p = self.input.pointer?;
         Some(Rect::from_min_size(p - d.grab, d.size))
     }
-    /// A payload of type `P` is dragged over `r`.
-    pub fn drag_over<P: 'static>(&self, r: Rect) -> bool {
+    /// Returns `true` while a payload of type `P` is dragged over `rect`.
+    pub fn drag_over<P: 'static>(&self, rect: Rect) -> bool {
         self.drag.as_ref().is_some_and(|d| d.payload.is::<P>())
-            && self.input.pointer.is_some_and(|p| r.contains(p))
+            && self.input.pointer.is_some_and(|p| rect.contains(p))
     }
-    /// The payload when it is released over `r`. Only the first taker gets it.
-    pub fn take_drop<P: 'static>(&mut self, r: Rect) -> Option<P> {
-        if !self.input.released || !self.drag_over::<P>(r) {
+    /// Returns the payload when it is released over `rect`. Only the first caller
+    /// gets it.
+    pub fn take_drop<P: 'static>(&mut self, rect: Rect) -> Option<P> {
+        if !self.input.released || !self.drag_over::<P>(rect) {
             return None;
         }
         let d = self.drag.take()?;
@@ -850,10 +951,13 @@ impl Context {
 
     // ----- misc -----
 
-    pub fn add_image(&mut self, w: u32, h: u32, rgba: Vec<u8>) -> ImageId {
+    /// Adds an image of `width` by `height` pixels in RGBA order, 8 bits per
+    /// channel, and returns its id. Draw it with [`Ui::image`](crate::Ui::image)
+    /// or [`Painter::image`](crate::Painter::image).
+    pub fn add_image(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> ImageId {
         let id = ImageId(self.next_image);
         self.next_image += 1;
-        self.uploads.push(ImageUpload { id, w, h, rgba });
+        self.uploads.push(ImageUpload { id, w: width, h: height, rgba });
         id
     }
 
@@ -863,14 +967,17 @@ impl Context {
         self.removed_images.push(id);
     }
 
-    pub fn copy_text(&mut self, s: impl Into<String>) {
-        self.host_commands.push(HostCommand::Copy(s.into()));
+    /// Puts `text` on the clipboard.
+    pub fn copy_text(&mut self, text: impl Into<String>) {
+        self.host_commands.push(HostCommand::Copy(text.into()));
     }
 
-    pub fn measure(&mut self, text: &str, size: f32, w: Weight) -> Vec2 {
-        self.text.layout(text, &TextStyle::new(size).weight(w)).size
+    /// Returns the size of `text` in one line at `size` points.
+    pub fn measure(&mut self, text: &str, size: f32, weight: Weight) -> Vec2 {
+        self.text.layout(text, &TextStyle::new(size).weight(weight)).size
     }
 
+    /// Shows a short message at the top of the window for a few seconds.
     pub fn toast(&mut self, icon: Option<crate::icon::Icon>, text: impl Into<String>) {
         self.toasts.push(crate::widgets::toast::ToastState::new(icon, text.into()));
     }
@@ -881,25 +988,30 @@ impl Context {
         self.toasts = t;
     }
 
+    /// Returns `true` if the popup `id` is open.
     pub fn popup_open(&self, id: Id) -> bool {
         self.open_popups.get(&id).copied().unwrap_or(false)
     }
+    /// Opens or closes the popup `id`.
     pub fn set_popup(&mut self, id: Id, open: bool) {
         self.open_popups.insert(id, open);
         self.repaint = true;
     }
+    /// Opens the popup `id` if it is closed, and closes it if it is open.
     pub fn toggle_popup(&mut self, id: Id) {
         let o = !self.popup_open(id);
         self.set_popup(id, o);
     }
 
-    /// Pointer pressed this frame outside of `r`.
-    pub fn pressed_outside(&self, r: Rect) -> bool {
-        self.input.pressed && self.input.pointer.is_some_and(|p| !r.contains(p))
+    /// Returns `true` if the pointer was pressed this frame outside `rect`.
+    pub fn pressed_outside(&self, rect: Rect) -> bool {
+        self.input.pressed && self.input.pointer.is_some_and(|p| !rect.contains(p))
     }
 
-    pub fn pointer_or(&self, p: Vec2) -> Vec2 {
-        self.input.pointer.unwrap_or(p)
+    /// Returns the pointer position, or `fallback` while the pointer is outside
+    /// the window.
+    pub fn pointer_or(&self, fallback: Vec2) -> Vec2 {
+        self.input.pointer.unwrap_or(fallback)
     }
 }
 
@@ -972,7 +1084,7 @@ mod tests {
             let mut d = 0.0;
             for _ in 0..120 {
                 c.apply_stats(&[(id.0, luma, 0.0)]);
-                frame(c, &[], |c| d = c.backdrop(id, true).dark);
+                frame(c, &[], |c| d = c.backdrop(id, true).darkness);
             }
             d
         };

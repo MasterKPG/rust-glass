@@ -608,7 +608,7 @@ fn input_method_composes_before_it_commits() {
         rig.frame(&[Event::Preedit("にほ".into(), Some((6, 6)))], &mut ui);
         // Keys belong to the input method while it composes.
         rig.frame(&[Event::Key(Key::Backspace)], &mut ui);
-        assert!(rig.ctx.ime.is_some(), "the caret is reported to the input method");
+        assert!(rig.ctx.ime_area.is_some(), "the caret is reported to the input method");
         rig.frame(&[Event::Preedit(String::new(), None), Event::Text("日本".into())], &mut ui);
     }
     assert_eq!(s, "ab日本");

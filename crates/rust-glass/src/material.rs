@@ -1,37 +1,46 @@
-//! The glass material: parameters, presets and how they adapt to the backdrop.
+//! The glass material: corner shapes, material parameters and presets, and
+//! glass elements ready to paint.
 
 use crate::color::Color;
 use crate::geometry::{Rect, Vec2, lerp, vec2};
 
-/// Corner shape. Rounded corners are continuous (curvature ramps up instead of
-/// jumping), capsules are slightly squared off the way iOS draws them.
+/// The shape of a rectangle's corners.
+///
+/// Rounded corners are continuous: the curvature ramps up instead of jumping
+/// where the straight edge ends, as on Apple platforms. A plain number
+/// converts to [`Corner::Radius`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Corner {
+    /// Continuous corners that look like a circular corner of this radius.
     Radius(f32),
+    /// Fully rounded ends, slightly squared off the way iOS draws them.
     Capsule,
-    /// A capsule of size `base` scaled to the size of the rectangle, each axis on
-    /// its own. `power` above 2 squares the shoulders off.
+    /// A capsule of size `base` stretched to the size of the rectangle, each
+    /// axis on its own. `power` above 2 squares the shoulders off.
     Stretched {
+        /// Size of the capsule before stretching.
         base: Vec2,
+        /// Exponent of the corner curve. 2 is a circle.
         power: f32,
     },
-    /// True circle or stadium, without smoothing.
+    /// Circular corners of this radius, without the continuous curve.
     Circular(f32),
 }
 
 impl From<f32> for Corner {
-    fn from(r: f32) -> Self {
-        Corner::Radius(r)
+    fn from(radius: f32) -> Self {
+        Corner::Radius(radius)
     }
 }
 
 impl Corner {
-    /// Radii and superellipse exponent for a rectangle of the given size.
+    /// Returns the corner radii and the exponent of the corner curve for a
+    /// rectangle of `size`.
     pub fn resolve(self, size: Vec2) -> (Vec2, f32) {
         let half = Vec2::splat(size.x.min(size.y) * 0.5);
         match self {
             Corner::Capsule => {
-                // Extend the curve along the long side for a G2 transition.
+                // Extend the curve along the long side for a smooth transition.
                 let mut r = half * 1.16;
                 r = r.min(size * 0.5);
                 // Nearly square shapes stay circles.
@@ -55,60 +64,83 @@ impl Corner {
     }
 }
 
-/// Every parameter of the material, in points where a length.
+/// The optical parameters of glass. Lengths are in points.
+///
+/// The surface is flat in the middle and curves down near its outline.
+/// Light passing through the curved part bends towards the middle, so the
+/// edge shows the backdrop from further inside. Start from a preset such as
+/// [`Material::REGULAR`] and change what you need.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Material {
-    /// How far the rim bends light towards the middle.
+    /// How far the curved edge bends the backdrop towards the middle.
     pub refraction: f32,
-    /// Width of the curved part, measured from the outline.
+    /// Width of the curved edge, measured inwards from the outline.
     pub depth: f32,
-    /// Opposite bend in a thin ring at the outline.
+    /// Bend in the opposite direction, in a thin ring right at the outline.
     pub outer_refraction: f32,
+    /// Width of the outer ring.
     pub outer_depth: f32,
-    /// Wide opposite bend further in, the raised shoulder of a drop.
+    /// Outward bend in a wide zone further in, like the raised shoulder of a
+    /// drop of liquid.
     pub pinch: f32,
+    /// Width of the pinch zone.
     pub pinch_width: f32,
-    /// 0 bends equally in all directions. At 1 the main bend works sideways only
-    /// and the pinch up and down only.
+    /// 0 bends equally in all directions. At 1 the main bend works only
+    /// sideways and the pinch only up and down.
     pub sideways: f32,
-    /// Chromatic aberration, as a fraction of the bend.
+    /// Separation of colors at the edge, as a fraction of the bend.
     pub dispersion: f32,
-    /// 0 disperses evenly around the outline. At 1 only the corners do, with
-    /// the order of the colors alternating from corner to corner.
+    /// 0 separates colors evenly around the outline. At 1 only the corners
+    /// do, with the order of the colors alternating from corner to corner.
     pub corner_dispersion: f32,
+    /// Blur radius of the backdrop.
     pub blur: f32,
+    /// Magnification of the backdrop. 1 shows it at its real size.
     pub magnify: f32,
-    /// Backdrop range mapping on a bright backdrop.
+    /// Range the backdrop brightness is mapped to on light glass, as
+    /// `(darkest, brightest)`.
     pub light_range: (f32, f32),
-    /// Backdrop range mapping on a dark backdrop.
+    /// Range the backdrop brightness is mapped to on dark glass.
     pub dark_range: (f32, f32),
+    /// Color saturation of the backdrop. 1 keeps it unchanged.
     pub saturation: f32,
-    /// Specular edge strength and width.
+    /// Strength of the bright edge that catches the light.
     pub rim: f32,
+    /// Width of the bright edge.
     pub rim_width: f32,
-    /// Part of the rim that shows all around, whatever the light.
+    /// Part of the bright edge that shows all around, whatever the light
+    /// direction.
     pub rim_base: f32,
+    /// Strength of the thin dark line just inside the outline.
     pub dark_edge: f32,
-    /// Light spilling in from the surroundings.
+    /// Light from the surroundings that spills onto the edge.
     pub light_spill: f32,
+    /// Glow on the side facing away from the light.
     pub inner_glow: f32,
+    /// Shade on the side facing the light.
     pub inner_shadow: f32,
+    /// Opacity of the drop shadow.
     pub shadow: f32,
+    /// Blur radius of the drop shadow.
     pub shadow_radius: f32,
+    /// Downward offset of the drop shadow.
     pub shadow_y: f32,
-    /// How much of the transmitted color the shadow carries.
+    /// How much of the color of the light passing through the shadow carries,
+    /// from 0 (gray) to 1.
     pub shadow_tint: f32,
-    /// Colored glass. Alpha is the strength.
+    /// Colored glass. The alpha is the strength of the color.
     pub tint: Option<Color>,
-    /// How much the tint follows backdrop brightness (0 is a flat fill).
+    /// How much the tint follows the brightness of the backdrop. 0 is a flat
+    /// fill.
     pub tint_follow: f32,
-    /// How much the frost and reduced transparency settings apply. A lens that
-    /// sits above its own label must stay clear.
+    /// How much [`Theme::glass_tint`](crate::Theme::glass_tint) and reduced
+    /// transparency change this material, from 0 to 1. Use 0 for glass that
+    /// must stay clear, such as a lens above its own label.
     pub glass_tint_response: f32,
 }
 
 impl Material {
-    /// Controls and bars. Legible over anything.
+    /// Controls and bars. Readable over any content.
     pub const REGULAR: Material = Material {
         refraction: 17.0,
         depth: 13.0,
@@ -140,7 +172,7 @@ impl Material {
         glass_tint_response: 1.0,
     };
 
-    /// Permanently transparent, for media backgrounds.
+    /// Clear glass that stays transparent, for controls over photos and video.
     pub const CLEAR: Material = Material {
         refraction: 24.0,
         depth: 18.0,
@@ -157,7 +189,8 @@ impl Material {
         ..Material::REGULAR
     };
 
-    /// Menus, sheets and windows: thicker, deeper shadow, softer light.
+    /// Menus, sheets, windows and panels: thicker, with a deeper shadow and
+    /// softer light.
     pub const THICK: Material = Material {
         refraction: 34.0,
         depth: 26.0,
@@ -176,7 +209,7 @@ impl Material {
         ..Material::REGULAR
     };
 
-    /// The droplet that lifts off a slider, switch or segment while touched.
+    /// The lens a slider, switch or segment thumb turns into while it is held.
     pub const LENS: Material = Material {
         refraction: 20.0,
         depth: 9.4,
@@ -202,9 +235,9 @@ impl Material {
         ..Material::REGULAR
     };
 
-    /// The selection of a tab bar while touched: a clear blob that stands proud
-    /// of the bar. A thin rim shows the bar from further inside, the wide zone
-    /// behind it pulls the edge of the bar inwards.
+    /// The selection of a tab bar while it is held: a clear blob that stands
+    /// out from the bar. A thin rim shows the bar from further inside, and
+    /// the wide zone behind it pulls the edge of the bar inwards.
     pub const BLOB: Material = Material {
         refraction: 20.0,
         depth: 3.5,
@@ -230,7 +263,8 @@ impl Material {
         ..Material::LENS
     };
 
-    /// Bends the labels under a blob: near the outline they smear inwards.
+    /// Bends the tab labels under [`Material::BLOB`]: near its outline they
+    /// smear inwards.
     pub const BLOB_LABELS: Material = Material {
         refraction: 23.0,
         depth: 16.0,
@@ -245,12 +279,14 @@ impl Material {
         ..Material::BLOB
     };
 
-    pub fn tinted(mut self, c: Color) -> Self {
-        self.tint = Some(c);
+    /// Returns the material colored with `color`. Its alpha is the strength.
+    pub fn tinted(mut self, color: Color) -> Self {
+        self.tint = Some(color);
         self
     }
 
-    /// Same look on an element `k` times as large.
+    /// Returns a material that looks the same on an element `k` times as
+    /// large.
     pub fn scaled(mut self, k: f32) -> Material {
         self.refraction *= k;
         self.depth *= k;
@@ -264,8 +300,10 @@ impl Material {
         self
     }
 
-    /// Blend two materials, used for lifts and morphs.
-    pub fn lerp(&self, o: &Material, t: f32) -> Material {
+    /// Mixes towards `other`: `t` = 0 gives `self`, 1 gives `other`. Used
+    /// when one kind of glass turns into another.
+    pub fn lerp(&self, other: &Material, t: f32) -> Material {
+        let o = other;
         let l = |a: f32, b: f32| lerp(a, b, t);
         let l2 = |a: (f32, f32), b: (f32, f32)| (l(a.0, b.0), l(a.1, b.1));
         Material {
@@ -306,49 +344,63 @@ impl Material {
     }
 }
 
-/// One shape of a glass element. Several shapes in one element fuse together.
+/// One shape of a glass element. Shapes of one element that come close fuse
+/// like drops of liquid.
 #[derive(Clone, Copy, Debug)]
 pub struct GlassShape {
+    /// Where the shape is.
     pub rect: Rect,
+    /// Its corners.
     pub corner: Corner,
+    /// A color for this shape only, instead of the material tint.
     pub tint: Option<Color>,
 }
 
 impl GlassShape {
+    /// Creates a shape.
     pub fn new(rect: Rect, corner: impl Into<Corner>) -> Self {
         Self { rect, corner: corner.into(), tint: None }
     }
-    pub fn tint(mut self, c: Option<Color>) -> Self {
-        self.tint = c;
+    /// Colors this shape only.
+    pub fn tint(mut self, color: Option<Color>) -> Self {
+        self.tint = color;
         self
     }
 }
 
-/// A glass element ready to paint.
+/// A glass element ready to paint with [`Painter::glass`](crate::Painter::glass).
+///
+/// Call [`Context::prepare_glass`](crate::Context::prepare_glass) before
+/// painting, so the element adapts to what is behind it.
 #[derive(Clone, Debug)]
 pub struct Glass {
+    /// The shapes of the element. Usually one.
     pub shapes: Vec<GlassShape>,
+    /// The material.
     pub material: Material,
     /// Distance in points at which neighbouring shapes start to merge.
     pub fuse: f32,
-    /// 0 is absent, 1 fully formed. Scales the optics, not just the alpha.
+    /// How formed the element is, from 0 (absent) to 1. It scales the optics,
+    /// not just the opacity, so glass appears by thickening.
     pub presence: f32,
-    /// 0 uses the light range, 1 the dark range.
+    /// 0 uses the light range of the material, 1 the dark range.
     pub darkness: f32,
-    /// Extra shadow, set from backdrop contrast.
+    /// Extra shadow over busy content.
     pub shadow_boost: f32,
-    /// Even brightening, the press feedback.
+    /// Even brightening, used as press feedback.
     pub brightness: f32,
-    /// Extra rotation of the highlights in radians.
+    /// Extra rotation of the highlights, in radians.
     pub light_bend: f32,
     /// Measure the backdrop for this slot.
     pub(crate) stat_key: Option<u64>,
 }
 
 impl Glass {
+    /// Creates an element of one shape.
     pub fn new(rect: Rect, corner: impl Into<Corner>, material: Material) -> Self {
         Self::group(vec![GlassShape::new(rect, corner)], material)
     }
+    /// Creates an element of several shapes that fuse where they come close.
     pub fn group(shapes: Vec<GlassShape>, material: Material) -> Self {
         Self {
             shapes,
@@ -362,18 +414,22 @@ impl Glass {
             stat_key: None,
         }
     }
-    pub fn presence(mut self, p: f32) -> Self {
-        self.presence = p.clamp(0.0, 1.0);
+    /// Sets [`Glass::presence`].
+    pub fn presence(mut self, presence: f32) -> Self {
+        self.presence = presence.clamp(0.0, 1.0);
         self
     }
-    pub fn fuse(mut self, f: f32) -> Self {
-        self.fuse = f;
+    /// Sets [`Glass::fuse`].
+    pub fn fuse(mut self, distance: f32) -> Self {
+        self.fuse = distance;
         self
     }
-    pub fn darkness(mut self, d: f32) -> Self {
-        self.darkness = d.clamp(0.0, 1.0);
+    /// Sets [`Glass::darkness`].
+    pub fn darkness(mut self, darkness: f32) -> Self {
+        self.darkness = darkness.clamp(0.0, 1.0);
         self
     }
+    /// Returns the rectangle around all shapes.
     pub fn bounds(&self) -> Rect {
         self.shapes.iter().fold(Rect::NOTHING, |a, s| a.union(s.rect))
     }

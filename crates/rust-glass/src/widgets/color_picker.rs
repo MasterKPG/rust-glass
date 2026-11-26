@@ -39,7 +39,7 @@ impl Widget for ColorPicker<'_> {
         m.tint = Some(self.color.alpha(0.95));
         m.tint_follow = 0.4;
         let mut g = Glass::new(gel.rect, Corner::Capsule, m);
-        g.brightness = 0.05 * gel.press.max(0.0);
+        g.brightness = 0.05 * gel.amount.max(0.0);
         ui.painter().glass(&g);
 
         #[derive(Clone, Copy, Default)]
@@ -121,6 +121,7 @@ impl Widget for ColorPicker<'_> {
 }
 
 impl Ui<'_> {
+    /// Adds a color swatch that opens a picker.
     pub fn color_picker(&mut self, color: &mut Color) -> Response {
         self.add(ColorPicker::new(color))
     }

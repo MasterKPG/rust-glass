@@ -26,8 +26,8 @@ pub fn alert(
     modal(ctx, id, open, w, |ui| {
         ui.align = crate::ui::Align::Center;
         ui.subheading(title);
-        let c = ui.surface.secondary();
-        let st = TextStyle::new(ui.ctx.theme.body).align(crate::text::TextAlign::Center);
+        let c = ui.surface.secondary_color();
+        let st = TextStyle::new(ui.ctx.theme.body_size).align(crate::text::TextAlign::Center);
         ui.styled_text(message, st, c);
         ui.space(8.0);
         let n = buttons.len().max(1);
@@ -156,7 +156,7 @@ pub fn sheet(ctx: &mut Context, id: Id, open: &mut bool, width: f32, height: f32
     let mut p = ctx.painter(layer, screen.expand(64.0));
     p.fill(screen.expand(64.0), 0.0, Color::black(0.22 * k));
     p.glass(&g);
-    let c = a.surface().tertiary();
+    let c = a.surface().tertiary_color();
     p.fill(Rect::from_center_size(vec2(r.center().x, r.min.y + 12.0), vec2(40.0, 5.0)), Corner::Capsule, c);
     let inner = Rect { min: r.min + vec2(24.0, 34.0), max: r.max - vec2(24.0, 20.0) };
     let mut ui = Ui::new(ctx, layer, id, inner);

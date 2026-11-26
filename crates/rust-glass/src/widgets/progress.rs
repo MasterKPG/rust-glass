@@ -44,7 +44,7 @@ impl Widget for ProgressBar {
         }
         let v = ui.ctx.animate(r.id, self.value.clamp(0.0, 1.0), Tuning::new(0.5, 0.9));
         let c = self.tint.unwrap_or(ui.ctx.theme.accent);
-        let track = ui.surface.fill_strong();
+        let track = ui.surface.strong_fill_color();
         let fw = (r.rect.width() * v).max(self.height);
         let fill = Rect::from_min_size(r.rect.min, vec2(fw, self.height));
         let mut p = ui.painter();
@@ -92,7 +92,7 @@ impl Widget for Gauge<'_> {
         let w = self.size * 0.12;
         let st = TextStyle::new(self.size * 0.22).weight(Weight::Semibold);
         let l = ui.layout_text(self.label, &st);
-        let (track, tc) = (ui.surface.fill(), ui.surface.text());
+        let (track, tc) = (ui.surface.fill_color(), ui.surface.text_color());
         let mut p = ui.painter();
         p.arc(r.rect.center(), self.size * 0.5, w, 0.0, TAU, track, track);
         if v > 0.001 {
@@ -138,7 +138,7 @@ impl Widget for Spinner {
     fn ui(self, ui: &mut Ui) -> Response {
         let r = ui.allocate_response(Vec2::splat(self.size), Sense::Hover);
         let t = ui.ctx.time as f32;
-        let c = ui.surface.text();
+        let c = ui.surface.text_color();
         let n = 8;
         let head = (t * 1.1).fract() * n as f32;
         let mut p = ui.painter();
@@ -160,9 +160,11 @@ impl Widget for Spinner {
 }
 
 impl Ui<'_> {
+    /// Adds a progress bar filled to `value`, from 0 to 1.
     pub fn progress(&mut self, value: f32) -> Response {
         self.add(ProgressBar::new(value))
     }
+    /// Adds a spinner.
     pub fn spinner(&mut self) -> Response {
         self.add(Spinner::new())
     }

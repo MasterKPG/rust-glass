@@ -1,5 +1,5 @@
-//! Run an app without a window: scripted input, fixed time steps, pixels back.
-//! Used for tests and for comparing renders with reference footage.
+//! Runs an app without a window: scripted input, fixed time steps, pixels
+//! back. Use it for tests and to render screenshots.
 
 use crate::app::{App, FrameInfo, run_ui};
 use crate::context::Context;
@@ -7,7 +7,11 @@ use crate::geometry::{Vec2, vec2};
 use crate::gpu::{Gpu, Renderer};
 use crate::input::Event;
 
+/// An app host without a window, for tests and screenshots.
+///
+/// It still needs a GPU. Time only moves when you call [`Headless::step`].
 pub struct Headless {
+    /// The window state, for reading what widgets did.
     pub ctx: Context,
     gpu: Gpu,
     renderer: Renderer,
@@ -15,11 +19,19 @@ pub struct Headless {
     size: (u32, u32),
     ppp: f32,
     time: f64,
+    /// Timings of the last frame.
     pub info: FrameInfo,
 }
 
 impl Headless {
-    pub fn new(width: u32, height: u32, ppp: f32) -> Result<Self, String> {
+    /// Creates a host that renders `width` by `height` pixels at
+    /// `pixels_per_point`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no graphics adapter is available.
+    pub fn new(width: u32, height: u32, pixels_per_point: f32) -> Result<Self, String> {
+        let ppp = pixels_per_point;
         let gpu = Gpu::new(Gpu::instance(), None, true)?;
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let renderer = Renderer::new(&gpu, format);
@@ -45,6 +57,7 @@ impl Headless {
         })
     }
 
+    /// Returns the name and backend of the GPU in use.
     pub fn describe(&self) -> String {
         self.gpu.describe()
     }
@@ -53,7 +66,8 @@ impl Headless {
         vec2(self.size.0 as f32, self.size.1 as f32) / self.ppp
     }
 
-    /// Advance by `dt` seconds and draw.
+    /// Advances time by `dt` seconds, runs one frame of `app` with `events` and
+    /// renders it.
     pub fn step(&mut self, app: &mut dyn App, dt: f64, events: &[Event]) {
         self.time += dt;
         let size = self.size_points();
@@ -77,7 +91,8 @@ impl Headless {
         self.info.gpu = self.renderer.frame_stats;
     }
 
-    /// Step until animations settle, at most `max` seconds.
+    /// Runs frames of 1/60 second until nothing animates any more, for at most
+    /// `max` seconds.
     pub fn settle(&mut self, app: &mut dyn App, max: f64) {
         let end = self.time + max;
         let mut quiet = 0;
@@ -87,7 +102,8 @@ impl Headless {
         }
     }
 
-    /// RGBA8 pixels of the last frame.
+    /// Returns the pixels of the last frame, row by row, in RGBA order with 8
+    /// bits per channel.
     pub fn pixels(&self) -> Vec<u8> {
         let (w, h) = self.size;
         let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);

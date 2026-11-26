@@ -1,5 +1,5 @@
-//! Draw lists. Widgets paint in points; instances are stored in pixels, ready
-//! for upload.
+//! Painting: shapes, text, images, masks and glass. Widgets paint in points.
+//! The draw list stores pixels, ready for the GPU.
 
 use std::rc::Rc;
 
@@ -137,7 +137,7 @@ pub(crate) struct Paint {
     /// Global material adjustments, from the theme.
     pub glass_tint: f32,
     pub reduce_transparency: bool,
-    pub high_contrast: bool,
+    pub increase_contrast: bool,
 }
 
 impl Paint {
@@ -220,22 +220,32 @@ impl Paint {
 /// Marks a shape that does not care which image is bound.
 const ANY_IMAGE: ImageId = ImageId(u32::MAX);
 
-/// Paints into one layer with a fixed clip rectangle.
+/// Draws shapes, text, images and glass into one layer. Get one from
+/// [`Ui::painter`](crate::Ui::painter) or
+/// [`Context::painter`](crate::Context::painter). All positions are in points.
 pub struct Painter<'a> {
     pub(crate) paint: &'a mut Paint,
     pub(crate) text: &'a mut TextEngine,
+    /// The layer painted into.
     pub layer: usize,
+    /// Nothing is painted outside this rectangle.
     pub clip: Rect,
+    /// Mask applied to everything painted. 0 is none.
     pub mask: u32,
+    /// Opacity of everything painted, from 0 to 1.
     pub opacity: f32,
 }
 
-/// Feather widths of a mask, in points.
+/// How far the edges of a mask fade out, in points. 0 is a hard edge.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Feather {
+    /// Fade at the left edge.
     pub left: f32,
+    /// Fade at the top edge.
     pub top: f32,
+    /// Fade at the right edge.
     pub right: f32,
+    /// Fade at the bottom edge.
     pub bottom: f32,
 }
 
@@ -284,12 +294,15 @@ impl Painter<'_> {
         s.power = n;
     }
 
-    /// Register a mask. Use the result with [`Painter::with_mask`].
-    pub fn add_mask(&mut self, r: Rect, corner: impl Into<Corner>, invert: bool, f: Feather) -> u32 {
-        let (rad, n) = corner.into().resolve(r.size());
+    /// Adds a mask and returns its number, for [`Painter::with_mask`]. Paint
+    /// shows inside `rect`, or outside with `invert`. `feather` fades the
+    /// edges of the rectangle.
+    pub fn add_mask(&mut self, rect: Rect, corner: impl Into<Corner>, invert: bool, feather: Feather) -> u32 {
+        let (rad, n) = corner.into().resolve(rect.size());
         let s = self.paint.ppp;
+        let f = feather;
         let m = MaskInst {
-            rect: self.px(r),
+            rect: self.px(rect),
             radius: [rad.x * s, rad.y * s],
             power: n,
             invert: invert as u32 as f32,
@@ -299,75 +312,110 @@ impl Painter<'_> {
         self.paint.data.masks.len() as u32
     }
 
+    /// Runs `f` with `mask` applied to everything it paints.
     pub fn with_mask(&mut self, mask: u32, f: impl FnOnce(&mut Painter)) {
         let old = std::mem::replace(&mut self.mask, mask);
         f(self);
         self.mask = old;
     }
 
-    pub fn fill(&mut self, r: Rect, corner: impl Into<Corner>, c: Color) {
-        let mut s = self.base(r, c);
-        self.round(&mut s, r, corner.into());
+    /// Fills a rectangle.
+    pub fn fill(&mut self, rect: Rect, corner: impl Into<Corner>, color: Color) {
+        let mut s = self.base(rect, color);
+        self.round(&mut s, rect, corner.into());
         self.push(s, ANY_IMAGE);
     }
 
-    /// Linear gradient along `dir` in unit rectangle coordinates.
-    pub fn gradient(&mut self, r: Rect, corner: impl Into<Corner>, a: Color, b: Color, dir: Vec2) {
-        let mut s = self.base(r, a);
-        self.round(&mut s, r, corner.into());
-        s.color2 = b.fade(self.opacity).to_array();
-        s.uv = [dir.x, dir.y, 0.0, 0.0];
+    /// Fills a rectangle with a linear gradient from `start` to `end`.
+    /// `direction` is in coordinates where the rectangle runs from 0 to 1, so
+    /// `vec2(0.0, 1.0)` goes from top to bottom.
+    pub fn gradient(
+        &mut self,
+        rect: Rect,
+        corner: impl Into<Corner>,
+        start: Color,
+        end: Color,
+        direction: Vec2,
+    ) {
+        let mut s = self.base(rect, start);
+        self.round(&mut s, rect, corner.into());
+        s.color2 = end.fade(self.opacity).to_array();
+        s.uv = [direction.x, direction.y, 0.0, 0.0];
         self.push(s, ANY_IMAGE);
     }
 
-    pub fn stroke(&mut self, r: Rect, corner: impl Into<Corner>, width: f32, c: Color) {
-        let mut s = self.base(r, c);
-        self.round(&mut s, r, corner.into());
+    /// Draws the outline of a rectangle, centered on its edge.
+    pub fn stroke(&mut self, rect: Rect, corner: impl Into<Corner>, width: f32, color: Color) {
+        let mut s = self.base(rect, color);
+        self.round(&mut s, rect, corner.into());
         s.stroke = (width * self.paint.ppp).max(0.75);
         self.push(s, ANY_IMAGE);
     }
 
-    pub fn shadow(&mut self, r: Rect, corner: impl Into<Corner>, soft: f32, c: Color) {
-        let mut s = self.base(r, c);
-        self.round(&mut s, r, corner.into());
-        s.soft = soft * self.paint.ppp;
+    /// Draws a soft shadow of a rectangle, blurred by `softness` points.
+    pub fn shadow(&mut self, rect: Rect, corner: impl Into<Corner>, softness: f32, color: Color) {
+        let mut s = self.base(rect, color);
+        self.round(&mut s, rect, corner.into());
+        s.soft = softness * self.paint.ppp;
         self.push(s, ANY_IMAGE);
     }
 
-    pub fn line(&mut self, a: Vec2, b: Vec2, width: f32, c: Color) {
-        let mut s = self.base(Rect { min: a, max: b }, c);
+    /// Draws a line from `from` to `to` with round ends.
+    pub fn line(&mut self, from: Vec2, to: Vec2, width: f32, color: Color) {
+        let mut s = self.base(Rect { min: from, max: to }, color);
         s.stroke = (width * 0.5 * self.paint.ppp).max(0.35);
         s.kind = LINE;
         self.push(s, ANY_IMAGE);
     }
 
-    /// Arc with round ends. Angles in radians, clockwise from the right.
+    /// Draws an arc with round ends around `center`. Angles are in radians,
+    /// clockwise from the right. The color runs from `start_color` to
+    /// `end_color` along the arc.
     #[allow(clippy::too_many_arguments)]
-    pub fn arc(&mut self, c: Vec2, radius: f32, width: f32, start: f32, sweep: f32, from: Color, to: Color) {
-        let mut s = self.base(Rect::from_center_size(c, Vec2::splat(radius * 2.0)), from);
-        s.color2 = to.fade(self.opacity).to_array();
+    pub fn arc(
+        &mut self,
+        center: Vec2,
+        radius: f32,
+        width: f32,
+        start: f32,
+        sweep: f32,
+        start_color: Color,
+        end_color: Color,
+    ) {
+        let mut s = self.base(Rect::from_center_size(center, Vec2::splat(radius * 2.0)), start_color);
+        s.color2 = end_color.fade(self.opacity).to_array();
         s.radius = [start, sweep.clamp(0.0, std::f32::consts::TAU)];
         s.stroke = width * 0.5 * self.paint.ppp;
         s.kind = ARC;
         self.push(s, ANY_IMAGE);
     }
 
-    pub fn image(&mut self, r: Rect, corner: impl Into<Corner>, id: ImageId, uv: Rect, tint: Color) {
-        let mut s = self.base(r, tint);
-        self.round(&mut s, r, corner.into());
+    /// Draws the part `uv` (0 to 1 on both axes) of an image into `rect`,
+    /// multiplied by `tint`.
+    pub fn image(&mut self, rect: Rect, corner: impl Into<Corner>, image: ImageId, uv: Rect, tint: Color) {
+        let mut s = self.base(rect, tint);
+        self.round(&mut s, rect, corner.into());
         s.uv = [uv.min.x, uv.min.y, uv.max.x, uv.max.y];
         s.kind = IMAGE;
-        self.push(s, id);
+        self.push(s, image);
     }
 
-    /// Text with its top left corner at `pos`.
-    pub fn text(&mut self, pos: Vec2, l: &Rc<TextLayout>, c: Color) {
-        self.text_scaled(pos, l, c, 1.0, pos);
+    /// Draws laid out text with its top left corner at `position`.
+    pub fn text(&mut self, position: Vec2, layout: &Rc<TextLayout>, color: Color) {
+        self.text_scaled(position, layout, color, 1.0, position);
     }
 
-    /// Text scaled around `about`, rasterized near its final size so it stays
-    /// sharp while a control grows or shrinks.
-    pub fn text_scaled(&mut self, pos: Vec2, l: &Rc<TextLayout>, c: Color, scale: f32, about: Vec2) {
+    /// Draws text scaled around `origin`. It is rasterized close to its final
+    /// size, so it stays sharp while a control grows or shrinks.
+    pub fn text_scaled(
+        &mut self,
+        position: Vec2,
+        layout: &Rc<TextLayout>,
+        color: Color,
+        scale: f32,
+        origin: Vec2,
+    ) {
+        let (pos, l, c, about) = (position, layout, color, origin);
         if c.a * self.opacity <= 0.002 {
             return;
         }
@@ -393,14 +441,15 @@ impl Painter<'_> {
         }
     }
 
-    /// Text centered in a rectangle.
-    pub fn text_centered(&mut self, r: Rect, l: &Rc<TextLayout>, c: Color, scale: f32) {
-        let pos = r.center() - l.size * 0.5;
-        self.text_scaled(pos, l, c, scale, r.center());
+    /// Draws text centered in `rect`, scaled around the center.
+    pub fn text_centered(&mut self, rect: Rect, layout: &Rc<TextLayout>, color: Color, scale: f32) {
+        let pos = rect.center() - layout.size * 0.5;
+        self.text_scaled(pos, layout, color, scale, rect.center());
     }
 
-    /// Icon centered in a square of `size` points.
-    pub fn icon(&mut self, center: Vec2, size: f32, icon: Icon, c: Color) {
+    /// Draws an icon `size` points wide, centered on `center`.
+    pub fn icon(&mut self, center: Vec2, size: f32, icon: Icon, color: Color) {
+        let c = color;
         let want = size * self.paint.ppp;
         // Even pixel sizes; small residual scale while animating.
         let px = ((want / 2.0).round() * 2.0).max(4.0);
@@ -417,6 +466,8 @@ impl Painter<'_> {
         self.push(s, ANY_IMAGE);
     }
 
+    /// Paints a glass element. It bends and blurs everything painted before
+    /// it, on this layer and below.
     pub fn glass(&mut self, g: &Glass) {
         if g.presence <= 0.001 || g.shapes.is_empty() || self.opacity <= 0.001 {
             return;
@@ -474,7 +525,7 @@ impl Painter<'_> {
         let bounds = g.bounds();
         let grow = m.shadow_radius * 2.0 + m.shadow_y.abs() + 3.0;
         let shadow = (m.shadow * (1.0 + g.shadow_boost)).min(0.6);
-        let hc = if self.paint.high_contrast { 0.5 } else { 0.0 };
+        let hc = if self.paint.increase_contrast { 0.5 } else { 0.0 };
         let c = bounds.center();
         let inst = GlassInst {
             bounds: self.px(bounds.expand(grow + g.fuse * 0.3)),

@@ -6,6 +6,7 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ### Added
 - `Context::remove_image` frees an image.
+- API docs for every public item. Pushes to dev fail when the docs have warnings.
 
 ### Changed
 - Breaking: each widget has its own module, such as `widgets::menu`, `widgets::dialog` and `widgets::toggle`. The old `bars`, `controls`, `overlay`, `gel` and `dnd` modules are gone. The prelude still exports every widget.
@@ -15,6 +16,11 @@ All notable changes are listed here. Format: Keep a Changelog.
 - Breaking: renamed `Context::ppp` to `pixels_per_point`, `Context::host` to `host_commands`, `HostCmd` to `HostCommand`, `Context::copy` to `copy_text`, `Context::adapt` to `backdrop` and its result `Adapted` to `Backdrop`.
 - Breaking: renamed `Ui::max` to `max_rect`, `Ui::alloc` to `allocate`, `Ui::alloc_interact` to `allocate_response`, `Ui::text_with` to `styled_text` and `Response::tip` to `on_hover_text`.
 - Breaking: renamed `Theme::frost` to `glass_tint`, `Material::frosts` to `glass_tint_response`, `Material::chroma` to `dispersion`, `Material::bleed` to `light_spill`, `Glass::lit` to `brightness`, `Corner::Round` to `Corner::Circular` and `Tuning::GEL` to `Tuning::PRESS`. The `knob` and `track` color setters of sliders and segmented controls are now `thumb_color` and `track_color`.
+- Breaking: the colors of `Surface` end in `_color` (`text_color`, `secondary_color`, `fill_color`, `strong_fill_color` and so on), and `Surface::dark` is `darkness`. `Theme::text` and `Theme::background` are `text_color` and `background_color`.
+- Breaking: renamed `Theme::body`, `caption` and `title` to `body_size`, `caption_size` and `title_size`, and `Theme::high_contrast` to `increase_contrast`.
+- Breaking: renamed `Context::clear` to `clear_color`, `Context::ime` to `ime_area`, `Input::secondary` to `secondary_clicked`, `Input::double` to `double_clicked`, `Cursor::ResizeH` to `ResizeHorizontal` and `PressEffect::press` to `amount`.
+- Breaking: `FrameStats::gpu_ms` is an `Option`. It is `None` where the GPU cannot measure time, such as the virtual machines of the macOS runners.
+- Parameters of public functions have full names, such as `rect` and `color` instead of `r` and `c`.
 - Breaking: the renderer, draw lists and glyph atlas are no longer public. `Context::center` is removed, use `ctx.screen.center()`.
 
 ## [0.2.0] - 2026-11-26

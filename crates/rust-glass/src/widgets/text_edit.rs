@@ -1,3 +1,5 @@
+//! Text fields: one line, several lines, password and search.
+
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::accessibility::Role;
@@ -135,27 +137,34 @@ fn next_word(s: &str, i: usize) -> usize {
 }
 
 impl<'a> TextEdit<'a> {
+    /// Creates a one line field that edits `text`.
     pub fn new(text: &'a mut String) -> Self {
         Self { text, hint: "", icon: None, password: false, rows: 1, width: None, clear_button: false }
     }
-    pub fn hint(mut self, h: &'a str) -> Self {
-        self.hint = h;
+    /// Shows `hint` while the field is empty.
+    pub fn hint(mut self, hint: &'a str) -> Self {
+        self.hint = hint;
         self
     }
-    pub fn icon(mut self, i: Icon) -> Self {
-        self.icon = Some(i);
+    /// Shows `icon` at the start of the field.
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
         self
     }
+    /// Hides the text behind dots.
     pub fn password(mut self) -> Self {
         self.password = true;
         self
     }
-    pub fn rows(mut self, n: usize) -> Self {
-        self.rows = n.max(1);
+    /// Makes the field `rows` lines high. Fields of more than one row wrap
+    /// and accept Enter.
+    pub fn rows(mut self, rows: usize) -> Self {
+        self.rows = rows.max(1);
         self
     }
-    pub fn width(mut self, w: f32) -> Self {
-        self.width = Some(w);
+    /// Sets the width. The default is the width left in the layout.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
     /// Magnifier icon and a clear button.
@@ -169,7 +178,7 @@ impl<'a> TextEdit<'a> {
 impl Widget for TextEdit<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let multi = self.rows > 1;
-        let font = ui.ctx.theme.body;
+        let font = ui.ctx.theme.body_size;
         let line = (font * 1.28).ceil();
         let h = if multi { line * self.rows as f32 + 22.0 } else { ui.ctx.theme.control_height };
         let w = self.width.unwrap_or_else(|| ui.available_width().clamp(80.0, 420.0));
@@ -388,7 +397,7 @@ impl Widget for TextEdit<'_> {
         let accent = ui.ctx.theme.accent;
         let mut s = ui.surface;
         if ui.surface.is_glass() {
-            let c = s.fill();
+            let c = s.fill_color();
             ui.painter().fill(r.rect, corner, c.fade(1.0 + 0.4 * hov));
         } else {
             let mut m = ui.ctx.theme.regular;
@@ -403,13 +412,13 @@ impl Widget for TextEdit<'_> {
         if r.focused {
             ui.ctx.request_repaint();
             let c = origin + vec2(cx, cy);
-            ui.ctx.ime = Some(Rect { min: c, max: c + vec2(1.0, ch) });
+            ui.ctx.ime_area = Some(Rect { min: c, max: c + vec2(1.0, ch) });
         }
         let hint = ui.layout_text(self.hint, &st);
         let old_clip = ui.clip;
         ui.clip =
             ui.clip.intersect(Rect { min: inner.min - vec2(2.0, 2.0), max: inner.max + vec2(2.0, 2.0) });
-        let text_color = s.text();
+        let text_color = s.text_color();
         let mut p = ui.painter();
         if composing.is_none() && sa != sb && f > 0.01 {
             for (s0, s1, top, height) in spans(&l, sa, sb) {
@@ -424,7 +433,7 @@ impl Widget for TextEdit<'_> {
             }
         }
         if shown.is_empty() && composing.is_none() {
-            p.text(origin, &hint, s.tertiary());
+            p.text(origin, &hint, s.tertiary_color());
         }
         p.text(origin, &l, text_color);
         if caret_on {
@@ -434,7 +443,7 @@ impl Widget for TextEdit<'_> {
         ui.clip = old_clip;
         if let Some(i) = self.icon {
             let y = if multi { r.rect.min.y + 11.0 + line * 0.5 } else { r.rect.center().y };
-            let c = s.secondary();
+            let c = s.secondary_color();
             ui.painter().icon(vec2(r.rect.min.x + 22.0, y), 16.0, i, c);
         }
         if show_clear {
@@ -455,7 +464,7 @@ impl Widget for TextEdit<'_> {
             if x.hovered {
                 ui.ctx.cursor = Cursor::Pointer;
             }
-            let (bg, fg) = (s.tertiary(), if s.dark() > 0.5 { Color::BLACK } else { Color::WHITE });
+            let (bg, fg) = (s.tertiary_color(), if s.darkness() > 0.5 { Color::BLACK } else { Color::WHITE });
             let mut p = ui.painter();
             p.fill(cr.shrink(1.5), Corner::Capsule, bg);
             p.icon(c, 12.0, Icon::Close, fg);
@@ -503,9 +512,11 @@ fn line_end(s: &str, i: usize, all: bool) -> usize {
 }
 
 impl Ui<'_> {
+    /// Adds a one line text field.
     pub fn text_edit(&mut self, text: &mut String, hint: &str) -> Response {
         self.add(TextEdit::new(text).hint(hint))
     }
+    /// Adds a search field with a magnifier icon.
     pub fn search_field(&mut self, text: &mut String, hint: &str) -> Response {
         self.add(TextEdit::new(text).hint(hint).search())
     }

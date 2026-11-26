@@ -7,7 +7,7 @@ use crate::material::Corner;
 use crate::paint::ImageId;
 use crate::ui::{Ui, Widget};
 
-/// An image added with [`Context::add_image`].
+/// An image added with [`Context::add_image`](crate::Context::add_image).
 pub struct Image {
     id: ImageId,
     size: Vec2,
@@ -35,6 +35,7 @@ impl Widget for Image {
 }
 
 impl Ui<'_> {
+    /// Adds an image added with [`Context::add_image`](crate::Context::add_image).
     pub fn image(&mut self, id: ImageId, size: Vec2, corner: impl Into<Corner>) -> Response {
         self.add(Image::new(id, size).corner(corner))
     }

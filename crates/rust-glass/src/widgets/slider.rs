@@ -1,3 +1,5 @@
+//! Slider, stepper and drag value.
+
 use std::ops::RangeInclusive;
 
 use crate::accessibility::{Action, Role};
@@ -26,6 +28,7 @@ pub struct Slider<'a> {
 }
 
 impl<'a> Slider<'a> {
+    /// Creates a slider for `value` within `range`.
     pub fn new(value: &'a mut f32, range: RangeInclusive<f32>) -> Self {
         Self { value, range, step: None, width: None, scale: 1.0, tint: None, knob: None, track: None }
     }
@@ -34,8 +37,9 @@ impl<'a> Slider<'a> {
         self.step = Some(s);
         self
     }
-    pub fn width(mut self, w: f32) -> Self {
-        self.width = Some(w);
+    /// Sets the width. The default is the width left, at most 420.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
     /// Enlarge track and thumb.
@@ -43,16 +47,19 @@ impl<'a> Slider<'a> {
         self.scale = s;
         self
     }
-    pub fn tint(mut self, c: Color) -> Self {
-        self.tint = Some(c);
+    /// Sets the color of the filled part. The default is the accent color.
+    pub fn tint(mut self, color: Color) -> Self {
+        self.tint = Some(color);
         self
     }
-    pub fn thumb_color(mut self, c: Color) -> Self {
-        self.knob = Some(c);
+    /// Sets the color of the thumb at rest.
+    pub fn thumb_color(mut self, color: Color) -> Self {
+        self.knob = Some(color);
         self
     }
-    pub fn track_color(mut self, c: Color) -> Self {
-        self.track = Some(c);
+    /// Sets the color of the empty part of the track.
+    pub fn track_color(mut self, color: Color) -> Self {
+        self.track = Some(color);
         self
     }
 }
@@ -132,7 +139,7 @@ impl Widget for Slider<'_> {
 
         let cy = r.rect.center().y;
         let accent = self.tint.unwrap_or(ui.ctx.theme.accent);
-        let track_c = self.track.unwrap_or(ui.surface.fill_strong());
+        let track_c = self.track.unwrap_or(ui.surface.strong_fill_color());
         let knob = self.knob.unwrap_or(ui.surface.thumb_color());
         let track = Rect::from_center_size(r.rect.center(), vec2(w, track_h));
         let thumb = thumb_rect(ui.ctx, vec2(px, cy), &f);
@@ -172,23 +179,28 @@ pub struct DragValue<'a> {
 }
 
 impl<'a> DragValue<'a> {
+    /// Creates a field for `value`.
     pub fn new(value: &'a mut f32) -> Self {
         Self { value, speed: 0.1, range: f32::MIN..=f32::MAX, decimals: 1, suffix: "" }
     }
-    pub fn speed(mut self, s: f32) -> Self {
-        self.speed = s;
+    /// Sets how much the value changes per point of pointer movement.
+    pub fn speed(mut self, speed: f32) -> Self {
+        self.speed = speed;
         self
     }
-    pub fn range(mut self, r: RangeInclusive<f32>) -> Self {
-        self.range = r;
+    /// Keeps the value within `range`.
+    pub fn range(mut self, range: RangeInclusive<f32>) -> Self {
+        self.range = range;
         self
     }
-    pub fn decimals(mut self, d: usize) -> Self {
-        self.decimals = d;
+    /// Sets the number of decimals shown.
+    pub fn decimals(mut self, decimals: usize) -> Self {
+        self.decimals = decimals;
         self
     }
-    pub fn suffix(mut self, s: &'a str) -> Self {
-        self.suffix = s;
+    /// Shows `suffix` after the number, such as a unit.
+    pub fn suffix(mut self, suffix: &'a str) -> Self {
+        self.suffix = suffix;
         self
     }
 }
@@ -196,12 +208,12 @@ impl<'a> DragValue<'a> {
 impl Widget for DragValue<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let text = format!("{:.*}{}", self.decimals, *self.value, self.suffix);
-        let st = TextStyle::new(ui.ctx.theme.body).weight(Weight::Medium);
+        let st = TextStyle::new(ui.ctx.theme.body_size).weight(Weight::Medium);
         let l = ui.layout_text(&text, &st);
         let mut r = ui.allocate_response(vec2((l.size.x + 26.0).max(64.0), 30.0), Sense::Drag);
         ui.ctx.focusable(r.id);
         if r.hovered || r.held {
-            ui.ctx.cursor = Cursor::ResizeH;
+            ui.ctx.cursor = Cursor::ResizeHorizontal;
         }
         let (lo, hi) = (*self.range.start(), *self.range.end());
         let before = *self.value;
@@ -220,7 +232,7 @@ impl Widget for DragValue<'_> {
         }
         r.changed = before != *self.value;
         let gel = crate::widgets::press::PressEffect::update(ui.ctx, &r, 0.6);
-        let (c, t) = (ui.surface.fill(), ui.surface.text());
+        let (c, t) = (ui.surface.fill_color(), ui.surface.text_color());
         let mut p = ui.painter();
         p.fill(gel.rect, 9.0, c.fade(1.0 + gel.hover * 0.6));
         p.text_centered(gel.rect, &l, t, gel.scale);
@@ -279,20 +291,20 @@ impl Widget for Stepper<'_> {
         let gb = crate::widgets::press::PressEffect::update(ui.ctx, &b, 1.0);
         let mut bar = rect;
         for g in [&ga, &gb] {
-            if g.press.abs() > 0.001 {
+            if g.amount.abs() > 0.001 {
                 bar = bar.union(g.rect);
             }
         }
         let can = (*self.value > *self.range.start(), *self.value < *self.range.end());
-        let mut color = ui.surface.text();
+        let mut color = ui.surface.text_color();
         if ui.surface.is_glass() {
-            let c = ui.surface.fill();
+            let c = ui.surface.fill_color();
             ui.painter().fill(bar, Corner::Capsule, c);
         } else {
             let m = ui.ctx.theme.regular;
             let mut g = crate::material::Glass::new(bar, Corner::Capsule, m);
-            color = ui.ctx.prepare_glass(id, &mut g, true).surface().text();
-            g.brightness = 0.04 * ga.press.max(gb.press).max(0.0);
+            color = ui.ctx.prepare_glass(id, &mut g, true).surface().text_color();
+            g.brightness = 0.04 * ga.amount.max(gb.amount).max(0.0);
             ui.painter().glass(&g);
         }
         let sep = color.alpha(0.16);
@@ -315,6 +327,7 @@ impl Widget for Stepper<'_> {
 }
 
 impl Ui<'_> {
+    /// Adds a slider for `value` within `range`.
     pub fn slider(&mut self, value: &mut f32, range: RangeInclusive<f32>) -> Response {
         self.add(Slider::new(value, range))
     }

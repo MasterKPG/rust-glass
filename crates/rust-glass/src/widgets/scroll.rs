@@ -1,3 +1,6 @@
+//! Scroll areas: vertical, horizontal, both, and long lists that lay out
+//! only the visible rows.
+
 use std::ops::Range;
 
 use crate::animation::{Spring, Tuning};
@@ -75,16 +78,19 @@ impl ScrollArea {
     pub fn both() -> Self {
         Self { x: true, ..Self::new() }
     }
+    /// Names the area. Needed when one `Ui` holds more than one scroll area.
     pub fn id(mut self, id: &'static str) -> Self {
         self.id = id;
         self
     }
-    pub fn height(mut self, h: f32) -> Self {
-        self.height = Some(h);
+    /// Sets the height. The default is the height left in the layout.
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
         self
     }
-    pub fn width(mut self, w: f32) -> Self {
-        self.width = Some(w);
+    /// Sets the width. The default is the width left in the layout.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
     /// Width of the column the content is laid out in, for [`Self::both`].
@@ -111,6 +117,7 @@ impl ScrollArea {
         self
     }
 
+    /// Shows the area with the content drawn by `f`.
     pub fn show<R>(self, ui: &mut Ui, f: impl FnOnce(&mut Ui) -> R) -> R {
         self.show_inner(ui, |ui, _| f(ui))
     }
@@ -272,7 +279,7 @@ impl ScrollArea {
         if s.bar.step((recent || engaged) as u32 as f32, Tuning::new(0.3, 1.0), dt) || recent {
             ui.ctx.request_repaint();
         }
-        let c = Color::black(0.38).lerp(Color::white(0.45), ui.surface.dark());
+        let c = Color::black(0.38).lerp(Color::white(0.45), ui.surface.darkness());
         let alpha = s.bar.value;
         for (a, bar_id, hot, start, len) in bars {
             let wide = ui.ctx.animate_bool(bar_id.with("wide"), hot, Tuning::SNAP);

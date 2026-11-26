@@ -18,33 +18,42 @@ pub use crate::gpu::FrameStats;
 use crate::gpu::{Gpu, Renderer};
 use crate::input::{Event, Key, Modifiers};
 
-/// Timings of recent frames, readable from the UI.
+/// Timings of recent frames, passed to [`App::update`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameInfo {
-    /// UI code and draw list building, milliseconds.
+    /// Time spent in UI code and building the draw list, in milliseconds.
     pub ui_ms: f32,
-    /// Encoding and submission, milliseconds.
+    /// Time spent sending the frame to the GPU, in milliseconds.
     pub encode_ms: f32,
+    /// What the renderer did.
     pub gpu: FrameStats,
-    /// Interval between frames while animating, milliseconds.
+    /// Time between frames while animating, in milliseconds.
     pub interval_ms: f32,
 }
 
+/// Your application. [`run`] calls it to draw each frame.
 pub trait App {
-    /// Called once, before the first frame.
+    /// Called once, before the first frame. Load images here.
     fn setup(&mut self, _ctx: &mut Context) {}
+    /// Describes the whole interface for this frame. Runs only when something
+    /// changed or an animation is running.
     fn update(&mut self, ctx: &mut Context, info: &FrameInfo);
-    /// A file was dropped on the window.
+    /// Called when a file is dropped on the window.
     fn file_dropped(&mut self, _ctx: &mut Context, _path: &std::path::Path) {}
 }
 
+/// Settings of the window opened by [`run`].
 #[derive(Clone, Debug)]
 pub struct Options {
+    /// Window title.
     pub title: String,
+    /// Initial size in points. The window is made smaller if the screen is.
     pub size: (f32, f32),
+    /// Smallest size in points.
     pub min_size: (f32, f32),
+    /// Wait for the display refresh before showing a frame.
     pub vsync: bool,
-    /// Prefer the integrated adapter on machines with two.
+    /// Prefer the integrated GPU on machines with two.
     pub low_power: bool,
 }
 
@@ -60,8 +69,8 @@ impl Default for Options {
     }
 }
 
-/// Run one frame of UI code, repeating it when sizes were guessed.
-pub fn run_ui(
+/// Runs one frame of UI code, again when sizes were guessed.
+pub(crate) fn run_ui(
     ctx: &mut Context,
     app: &mut dyn App,
     info: &FrameInfo,
@@ -113,7 +122,11 @@ struct Host<A: App> {
     error: Option<String>,
 }
 
-/// Open a window and run `app` until it closes.
+/// Opens a window and runs `app` until the window closes.
+///
+/// # Errors
+///
+/// Returns an error when the window or the GPU cannot be set up.
 pub fn run(options: Options, app: impl App + 'static) -> Result<(), String> {
     let start = Instant::now();
     let el = EventLoop::with_user_event().build().map_err(|e| e.to_string())?;
@@ -206,8 +219,8 @@ impl<A: App> Host<A> {
             let (ctx, title) = (&self.ctx, &self.options.title);
             live.access.update_if_active(|| ctx.access_update(title));
         }
-        if live.ime != self.ctx.ime {
-            match self.ctx.ime {
+        if live.ime != self.ctx.ime_area {
+            match self.ctx.ime_area {
                 Some(r) => {
                     if live.ime.is_none() {
                         live.window.set_ime_allowed(true);
@@ -219,7 +232,7 @@ impl<A: App> Host<A> {
                 }
                 None => live.window.set_ime_allowed(false),
             }
-            live.ime = self.ctx.ime;
+            live.ime = self.ctx.ime_area;
         }
         let ui_done = Instant::now();
         let smooth = |old: f32, new: f32| if old == 0.0 { new } else { old * 0.9 + new * 0.1 };
@@ -267,7 +280,7 @@ impl<A: App> Host<A> {
                 Cursor::Pointer => CursorIcon::Pointer,
                 Cursor::Text => CursorIcon::Text,
                 Cursor::Grab => CursorIcon::Default,
-                Cursor::ResizeH => CursorIcon::EwResize,
+                Cursor::ResizeHorizontal => CursorIcon::EwResize,
                 Cursor::NotAllowed => CursorIcon::NotAllowed,
             });
         }

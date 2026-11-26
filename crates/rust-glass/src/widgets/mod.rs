@@ -1,5 +1,5 @@
-//! Built in widgets, one module per component. Most are also re-exported in
-//! the [`prelude`](crate::prelude).
+//! Built in widgets, one module per component. The
+//! [`prelude`](crate::prelude) exports all of them.
 
 pub mod button;
 pub mod checkbox;

@@ -476,7 +476,7 @@ fn configure(ctx: &mut Context) {
     ctx.theme.dark = true;
     ctx.theme.accent = Color::PINK;
     ctx.theme.glass_tint = 0.2;
-    ctx.theme.body = 15.0;
+    ctx.theme.body_size = 15.0;
 }
 ```
 
@@ -488,7 +488,7 @@ fn configure(ctx: &mut Context) {
 | `adaptive` | `true` | Small glass switches between light and dark with its backdrop. |
 | `reduce_transparency` | `false` | Denser surfaces. |
 | `reduce_motion` | `false` | No overshoot. |
-| `high_contrast` | `false` | Stronger edges. |
+| `increase_contrast` | `false` | Stronger edges. |
 | `regular`, `clear`, `thick`, `lens`, `blob`, `blob_labels` | presets | Materials used by the widgets. |
 | `control_height`, `spacing` | `36`, `10` | Sizes in points. |
 | `body`, `caption`, `title` | `14`, `12`, `24` | Font sizes. |
@@ -555,7 +555,7 @@ impl Widget for Stars<'_> {
             *self.rating = (((p.x - r.rect.min.x) / 30.0) as usize + 1).min(5);
             r.changed = true;
         }
-        let off = ui.surface.fill_strong();
+        let off = ui.surface.strong_fill_color();
         let mut p = ui.painter();
         for i in 0..5 {
             let center = vec2(r.rect.min.x + 15.0 + 30.0 * i as f32, r.rect.center().y);
@@ -586,7 +586,7 @@ fn badge(ui: &mut Ui, text: &str) {
     let id = ui.next_id();
     let material = ui.ctx.theme.regular;
     let surface = ui.glass(id, r, Corner::Capsule, material, true);
-    ui.painter().text_centered(r, &layout, surface.text(), 1.0);
+    ui.painter().text_centered(r, &layout, surface.text_color(), 1.0);
 }
 
 // Two shapes in one element fuse like drops.
