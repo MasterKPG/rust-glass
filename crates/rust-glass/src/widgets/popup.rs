@@ -1,6 +1,6 @@
 //! Popups and tooltips. A popup grows out of the control that opened it.
 
-use crate::animation::{Spring, SpringRect, Tuning};
+use crate::animation::{POINTS, Spring, SpringRect, Tuning};
 use crate::context::{Context, Id, Order, Response, Sense};
 use crate::geometry::{Rect, Vec2, lerp, smoothstep, vec2};
 use crate::input::Key;
@@ -59,7 +59,7 @@ pub fn popup(ctx: &mut Context, id: Id, anchor: Rect, width: f32, f: impl FnOnce
     } else {
         (ctx.tuning(Tuning::new(0.30, 0.95)), ctx.tuning(Tuning::new(0.30, 0.95)))
     };
-    let mut moving = s.shape.step(target, pt, st, dt);
+    let mut moving = s.shape.step_within(target, pt, st, dt, POINTS);
     moving |= s.t.step(open as u32 as f32, ctx.tuning(Tuning::new(if open { 0.30 } else { 0.24 }, 1.0)), dt);
     // A closing popup is gone once it has faded out, even if its shape is
     // still a fraction of a point from the anchor.

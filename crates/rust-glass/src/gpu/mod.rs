@@ -142,15 +142,42 @@ impl Px {
     }
 }
 
-/// Adds `c` to a list of capture rectangles, merged with the ones it
-/// touches. Glass far apart gets separate captures, so two small controls in
-/// opposite corners do not copy the whole window between them.
-fn add_capture(list: &mut Vec<Px>, c: Px) {
+/// A rectangle of the scene captured for glass to read, and the first level
+/// of the blur chain its glass reads. A capture that starts at level 1 skips
+/// the full size copy: its first level is filtered from the scene directly.
+#[derive(Clone, Copy, Debug)]
+struct Capture {
+    rect: Px,
+    first: u32,
+}
+
+/// Adds `c` to a list of captures, merged with the ones it touches. Glass far
+/// apart gets separate captures, so two small controls in opposite corners do
+/// not copy the whole window between them.
+fn add_capture(list: &mut Vec<Capture>, c: Capture) {
     let mut c = c;
-    while let Some(i) = list.iter().position(|o| o.grow(PAD as f32).intersects(&c)) {
-        c = c.union(&list.swap_remove(i));
+    while let Some(i) = list.iter().position(|o| o.rect.grow(PAD as f32).intersects(&c.rect)) {
+        let o = list.swap_remove(i);
+        c = Capture { rect: c.rect.union(&o.rect), first: c.first.min(o.first) };
     }
     list.push(c);
+}
+
+/// The first level of the blur chain a glass element reads: 1 for glass
+/// blurred by enough that the shader never reads the sharp backdrop, and 0
+/// for clear glass. `probe` is the rectangle its backdrop is measured in, if
+/// it is measured.
+fn first_level(g: &GlassInst, probe: Option<[f32; 4]>) -> u32 {
+    // Every lookup of the shader blurs by at least 0.45 of the radius, at the
+    // rim, and only a blur under 4 / 3 pixels reads the sharp level.
+    if g.blur * 0.45 < 1.5 {
+        return 0;
+    }
+    // The measurement reads the sharp level for rectangles under 16 pixels.
+    match probe {
+        Some(r) if (r[2] - r[0]).max(r[3] - r[1]) < 16.0 => 0,
+        _ => 1,
+    }
 }
 
 /// The mip level a glass element reads its blur from, and how far around its
@@ -406,6 +433,8 @@ struct GlassUse {
     /// What it reads from the backdrop.
     reads: Px,
     lod: u32,
+    /// The first level of the blur chain it reads, see [`first_level`].
+    first: u32,
 }
 
 #[derive(Default)]
@@ -710,7 +739,8 @@ impl Renderer {
                     fs: &str,
                     topo,
                     format,
-                    blend| {
+                    blend,
+                    constants: &[(&str, f64)]| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
@@ -726,7 +756,7 @@ impl Renderer {
                 fragment: Some(wgpu::FragmentState {
                     module: m,
                     entry_point: Some(fs),
-                    compilation_options: Default::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
                         blend,
@@ -746,19 +776,14 @@ impl Renderer {
             TriangleStrip,
             SCENE_FORMAT,
             Some(premultiplied),
+            &[],
         );
-        let glass_pipe = pipe(
-            "glass",
-            &pipe_layout(&[Some(&glass_layout), Some(&backdrop_layout)]),
-            &glass_mod,
-            "fs",
-            TriangleStrip,
-            SCENE_FORMAT,
-            Some(premultiplied),
-        );
+        let glass_pl = pipe_layout(&[Some(&glass_layout), Some(&backdrop_layout)]);
+        let glass_pipe =
+            pipe("glass", &glass_pl, &glass_mod, "fs", TriangleStrip, SCENE_FORMAT, Some(premultiplied), &[]);
         let blur_pl = pipe_layout(&[Some(&blur_layout)]);
-        let blur_pipe = pipe("blur", &blur_pl, &blur_mod, "fs", TriangleList, SCENE_FORMAT, None);
-        let present_pipe = pipe("present", &blur_pl, &blur_mod, "present", TriangleList, output, None);
+        let blur_pipe = pipe("blur", &blur_pl, &blur_mod, "fs", TriangleList, SCENE_FORMAT, None, &[]);
+        let present_pipe = pipe("present", &blur_pl, &blur_mod, "present", TriangleList, output, None, &[]);
         let stats_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("stats"),
             layout: Some(&pipe_layout(&[Some(&stats_layout)])),
@@ -1203,7 +1228,8 @@ impl Renderer {
                     w.pass.items.push(Item::Glass(index));
                     let (lod, reach) = glass_reach(g, &b, probe != u32::MAX, data.ppp);
                     let reads = b.grow(reach).intersect(&screen);
-                    w.pass.glass.push(GlassUse { index, probe, drawn, reads, lod });
+                    let first = first_level(g, data.probes.get(probe as usize).map(|p| p.1));
+                    w.pass.glass.push(GlassUse { index, probe, drawn, reads, lod, first });
                 }
             }
         }
@@ -1253,6 +1279,12 @@ impl Renderer {
             t.state.store(0, Ordering::Release);
         }
         out
+    }
+
+    /// Draws every frame in full when `on`, as `RUST_GLASS_FULL_REDRAW=1`
+    /// does, so frame timings measure the whole window.
+    pub fn set_full_redraw(&mut self, on: bool) {
+        self.full_redraw = on;
     }
 
     /// Measurements are still in flight.
@@ -1309,7 +1341,7 @@ impl Renderer {
 
         // What each pass captures: the reads of its glass that reads again,
         // with the measurements of that glass.
-        let mut captures: Vec<Vec<Px>> = Vec::with_capacity(plan.passes.len());
+        let mut captures: Vec<Vec<Capture>> = Vec::with_capacity(plan.passes.len());
         let mut lods = Vec::with_capacity(plan.passes.len());
         let mut probe_list: Vec<u32> = Vec::new();
         let mut probe_ranges = Vec::with_capacity(plan.passes.len());
@@ -1324,7 +1356,7 @@ impl Renderer {
                 if !again || nothing {
                     continue;
                 }
-                add_capture(&mut caps, u.reads.intersect(&area));
+                add_capture(&mut caps, Capture { rect: u.reads.intersect(&area), first: u.first.min(u.lod) });
                 lod = lod.max(u.lod);
                 if u.probe != u32::MAX && probe_list.len() < MAX_PROBES as usize {
                     probe_list.push(u.probe);
@@ -1414,13 +1446,18 @@ impl Renderer {
             let level = t.levels.get(pi).and_then(Option::as_ref);
             let mut copied = Vec::with_capacity(captures[pi].len());
             if let Some(lv) = level {
-                for c in &captures[pi] {
+                for cap in &captures[pi] {
+                    let c = cap.rect;
                     let align = |v: f32| (v.max(0.0) as u32) / PAD * PAD;
                     let x0 = align(c.x0).min(t.tex.0);
                     let y0 = align(c.y0).min(t.tex.1);
                     let x1 = (c.x1.max(0.0).ceil() as u32).next_multiple_of(PAD).min(t.tex.0);
                     let y1 = (c.y1.max(0.0).ceil() as u32).next_multiple_of(PAD).min(t.tex.1);
-                    if x1 > x0 && y1 > y0 {
+                    if x1 > x0 && y1 > y0 && cap.first > 0 {
+                        // Filtered from the scene in the first blur step.
+                        fs.captured_px += ((x1 - x0) as u64 * (y1 - y0) as u64) >> (2 * cap.first);
+                        copied.push((x0, y0, x1, y1, cap.first));
+                    } else if x1 > x0 && y1 > y0 {
                         fs.captured_px += (x1 - x0) as u64 * (y1 - y0) as u64;
                         let origin = wgpu::Origin3d { x: x0, y: y0, z: 0 };
                         let info = |texture| wgpu::TexelCopyTextureInfo {
@@ -1434,7 +1471,7 @@ impl Renderer {
                             info(&lv.backdrop),
                             wgpu::Extent3d { width: x1 - x0, height: y1 - y0, depth_or_array_layers: 1 },
                         );
-                        copied.push((x0, y0, x1, y1));
+                        copied.push((x0, y0, x1, y1, 0));
                     }
                 }
                 if !copied.is_empty() {
@@ -1453,8 +1490,17 @@ impl Renderer {
                             ..Default::default()
                         });
                         rp.set_pipeline(&self.blur_pipe);
-                        rp.set_bind_group(0, &lv.mip_groups[lod as usize - 1], &[]);
-                        for &(x0, y0, x1, y1) in &copied {
+                        let mut from_scene = None;
+                        for &(x0, y0, x1, y1, first) in &copied {
+                            // A capture without the full size copy reads the
+                            // scene for its first level.
+                            let scene = lod == 1 && first == 1;
+                            if from_scene != Some(scene) {
+                                from_scene = Some(scene);
+                                let src =
+                                    if scene { &t.present_group } else { &lv.mip_groups[lod as usize - 1] };
+                                rp.set_bind_group(0, src, &[]);
+                            }
                             rp.set_scissor_rect(
                                 x0 >> lod,
                                 y0 >> lod,
@@ -1726,7 +1772,7 @@ mod tests {
         let p = plan(&d);
         let mut caps = Vec::new();
         for u in &p.passes[1].glass {
-            add_capture(&mut caps, u.reads);
+            add_capture(&mut caps, Capture { rect: u.reads, first: u.first });
         }
         assert_eq!(caps.len(), 2);
     }
@@ -1778,6 +1824,27 @@ mod tests {
         find(&frame(0.0));
         let changed = find(&frame(1.0)).unwrap();
         assert_eq!(changed.dirty, [false]);
+    }
+
+    #[test]
+    fn blurred_glass_skips_the_sharp_copy() {
+        let mut g: GlassInst = Zeroable::zeroed();
+        // Clear glass reads the sharp backdrop.
+        g.blur = 1.0;
+        assert_eq!(first_level(&g, None), 0);
+        // Blurred glass does not, even with a lens.
+        g.blur = 6.0;
+        g.inner_amount = 4.0;
+        assert_eq!(first_level(&g, None), 1);
+        assert_eq!(first_level(&g, Some([0.0, 0.0, 40.0, 40.0])), 1);
+        // A small measured rectangle reads the sharp level.
+        assert_eq!(first_level(&g, Some([0.0, 0.0, 10.0, 10.0])), 0);
+        // A capture shared with clear glass keeps the copy.
+        let mut caps = Vec::new();
+        add_capture(&mut caps, Capture { rect: Px::new([0.0, 0.0, 100.0, 100.0]), first: 1 });
+        add_capture(&mut caps, Capture { rect: Px::new([90.0, 0.0, 200.0, 100.0]), first: 0 });
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].first, 0);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Lists: navigation list, settings rows, sections and tables.
 
 use crate::accessibility::Role;
-use crate::animation::Tuning;
+use crate::animation::{POINTS, Spring, Tuning};
 use crate::color::Color;
 use crate::context::{Cursor, Sense};
 use crate::geometry::{Rect, Vec2, vec2};
@@ -23,13 +23,18 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
     let old = ui.spacing;
     ui.spacing = 2.0;
     let top = ui.next_pos().y;
-    let y = ui.ctx.animate(id, *selected as f32, Tuning::new(0.34, 0.78));
-    let v = ui.ctx.get::<crate::animation::Spring>(id).velocity;
+    // In points, so the highlight stops where its motion no longer shows.
+    let row = h + 2.0;
+    let mut spring: Spring = ui.ctx.get(id);
+    if spring.step_within(*selected as f32 * row, ui.ctx.tuning(Tuning::new(0.34, 0.78)), ui.ctx.dt, POINTS) {
+        ui.ctx.request_repaint();
+    }
+    ui.ctx.set(id, spring);
+    let (y, v) = (spring.value, spring.velocity / row);
     let accent = ui.ctx.theme.accent.lerp(Color::WHITE, 0.35 * ui.surface.darkness());
     // The highlight stretches along its way.
     let s = (v.abs() * 0.9).min(9.0);
-    let hl = Rect::from_min_size(vec2(ui.cursor.x, top + y * (h + 2.0)), vec2(w, h))
-        .expand2(vec2(-s * 0.2, s * 0.35));
+    let hl = Rect::from_min_size(vec2(ui.cursor.x, top + y), vec2(w, h)).expand2(vec2(-s * 0.2, s * 0.35));
     let c = ui.surface.strong_fill_color();
     ui.painter().fill(hl, Corner::Capsule, c);
     for (i, (icon, label)) in items.iter().enumerate() {

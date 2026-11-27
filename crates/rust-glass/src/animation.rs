@@ -7,6 +7,10 @@
 
 use crate::geometry::{Rect, Vec2, vec2};
 
+/// Precision for positions and sizes in points: under three hundredths of a
+/// pixel at any scale.
+pub(crate) const POINTS: f32 = 0.01;
+
 /// How a spring moves, in the SwiftUI convention.
 ///
 /// `response` is the period of the undamped spring in seconds: smaller is
@@ -57,6 +61,11 @@ pub struct Spring {
 }
 
 impl Spring {
+    /// How close [`Self::step`] comes to the target before it stops: half a
+    /// step of an 8 bit color for values from 0 to 1, such as opacity, and a
+    /// few thousandths of a pixel for positions in points.
+    pub const PRECISION: f32 = 0.002;
+
     /// Creates a spring resting at `value`.
     pub fn new(value: f32) -> Self {
         Self { value, velocity: 0.0, started: true }
@@ -70,8 +79,30 @@ impl Spring {
     ///
     /// The step uses the exact solution of the damped oscillator, so the
     /// result is the same at any frame rate and a long frame cannot make it
-    /// unstable.
+    /// unstable. The spring stops once the rest of its motion stays within
+    /// [`Self::PRECISION`] of the target.
     pub fn step(&mut self, target: f32, tuning: Tuning, dt: f32) -> bool {
+        self.step_within(target, tuning, dt, Self::PRECISION)
+    }
+
+    /// Like [`Self::step`], but stops once the rest of the motion stays
+    /// within `precision` of the target, in the units of the value. Use it
+    /// for values whose units are large, such as a speed in points per
+    /// second, so the window goes idle as soon as nothing visible moves.
+    ///
+    /// ```
+    /// use rust_glass::prelude::*;
+    ///
+    /// // A speed in points per second: a tenth makes no visible difference.
+    /// let mut speed = Spring::new(800.0);
+    /// let mut frames = 0;
+    /// while speed.step_within(0.0, Tuning::SMOOTH, 1.0 / 60.0, 0.1) {
+    ///     frames += 1;
+    /// }
+    /// assert_eq!(speed.value, 0.0);
+    /// assert!(frames < 60);
+    /// ```
+    pub fn step_within(&mut self, target: f32, tuning: Tuning, dt: f32, precision: f32) -> bool {
         if !self.started {
             *self = Spring::new(target);
             return false;
@@ -80,21 +111,25 @@ impl Spring {
         let z = tuning.damping.clamp(0.05, 1.0);
         let x0 = self.value - target;
         let v0 = self.velocity;
-        let (x, v) = if z > 0.999 {
+        let (x, v, reach) = if z > 0.999 {
             let c = v0 + w * x0;
             let e = (-w * dt).exp();
-            ((x0 + c * dt) * e, (v0 - w * c * dt) * e)
+            let (x, v) = ((x0 + c * dt) * e, (v0 - w * c * dt) * e);
+            // From here x(t) = (x + c t) e^(-w t), and t e^(-w t) peaks at
+            // 1 / (e w).
+            (x, v, x.abs() + (v + w * x).abs() / (std::f32::consts::E * w))
         } else {
             let wd = w * (1.0 - z * z).sqrt();
             let e = (-z * w * dt).exp();
             let (s, c) = (wd * dt).sin_cos();
             let b = (v0 + z * w * x0) / wd;
-            (e * (x0 * c + b * s), e * (v0 * c - (z * w * b + wd * x0) * s))
+            let (x, v) = (e * (x0 * c + b * s), e * (v0 * c - (z * w * b + wd * x0) * s));
+            // The envelope of the oscillation from here on.
+            (x, v, x.hypot((v + z * w * x) / wd))
         };
         self.value = target + x;
         self.velocity = v;
-        let scale = 1.0 + target.abs() * 0.02;
-        if x.abs() < 0.0008 * scale && v.abs() < 0.01 * scale {
+        if reach < precision {
             self.value = target;
             self.velocity = 0.0;
             return false;
@@ -135,6 +170,11 @@ impl Spring2d {
     pub fn step(&mut self, target: Vec2, tuning: Tuning, dt: f32) -> bool {
         self.x.step(target.x, tuning, dt) | self.y.step(target.y, tuning, dt)
     }
+    /// Like [`Self::step`], with a precision. See [`Spring::step_within`].
+    pub fn step_within(&mut self, target: Vec2, tuning: Tuning, dt: f32, precision: f32) -> bool {
+        self.x.step_within(target.x, tuning, dt, precision)
+            | self.y.step_within(target.y, tuning, dt, precision)
+    }
     /// Jumps to `value` and stops.
     pub fn set(&mut self, value: Vec2) {
         *self = Self::new(value);
@@ -159,6 +199,19 @@ impl SpringRect {
     /// Moves towards `target` and returns `true` while still moving.
     pub fn step(&mut self, target: Rect, center: Tuning, size: Tuning, dt: f32) -> bool {
         self.center.step(target.center(), center, dt) | self.size.step(target.size(), size, dt)
+    }
+    /// Like [`Self::step`], with a precision in points. See
+    /// [`Spring::step_within`].
+    pub fn step_within(
+        &mut self,
+        target: Rect,
+        center: Tuning,
+        size: Tuning,
+        dt: f32,
+        precision: f32,
+    ) -> bool {
+        self.center.step_within(target.center(), center, dt, precision)
+            | self.size.step_within(target.size(), size, dt, precision)
     }
     /// Current rectangle.
     pub fn rect(&self) -> Rect {
@@ -203,6 +256,29 @@ mod tests {
         };
         assert!(peak(Tuning::PRESS) > 1.02);
         assert!(peak(Tuning::SNAP) <= 1.0001);
+    }
+
+    #[test]
+    fn stops_when_the_rest_is_invisible() {
+        // Every frame after a spring stops would have moved it by less than
+        // its precision.
+        for tuning in [Tuning::SNAP, Tuning::SMOOTH, Tuning::PRESS, Tuning::BOUNCY] {
+            let mut s = Spring::new(0.0);
+            let mut frames = 0;
+            while s.step(1.0, tuning, 1.0 / 60.0) {
+                frames += 1;
+            }
+            assert!(frames < 120, "{tuning:?} took {frames} frames");
+            let mut free = Spring::new(0.0);
+            let mut worst: f32 = 0.0;
+            for i in 0..600 {
+                free.step_within(1.0, tuning, 1.0 / 60.0, 0.0);
+                if i >= frames {
+                    worst = worst.max((free.value - 1.0).abs());
+                }
+            }
+            assert!(worst < Spring::PRECISION, "{tuning:?} still moves {worst}");
+        }
     }
 
     #[test]

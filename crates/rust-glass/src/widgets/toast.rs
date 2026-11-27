@@ -1,6 +1,6 @@
 //! Toasts: short messages at the top of the window.
 
-use crate::animation::{Spring, Tuning};
+use crate::animation::{POINTS, Spring, Tuning};
 use crate::context::{Context, Id, Order};
 use crate::geometry::{Rect, Vec2, lerp, smoothstep, vec2};
 use crate::icon::Icon;
@@ -45,7 +45,7 @@ pub(crate) fn show_toasts(ctx: &mut Context) {
         let show = age < 2.6 && i + 4 > n;
         let tune = ctx.tuning(if show { Tuning::new(0.46, 0.70) } else { Tuning::new(0.30, 1.0) });
         moving |= t.t.step(show as u32 as f32, tune, ctx.dt);
-        moving |= t.y.step(y, ctx.tuning(Tuning::SMOOTH), ctx.dt);
+        moving |= t.y.step_within(y, ctx.tuning(Tuning::SMOOTH), ctx.dt, POINTS);
         if show {
             next_hide = next_hide.min(2.6 - age);
         }

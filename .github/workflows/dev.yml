@@ -49,3 +49,28 @@ jobs:
           name: captures-${{ runner.os }}
           path: captures
           retention-days: 14
+      # Frame budget: the commit before this push and the push itself are
+      # timed twice each, in turn, on this runner. Fails when the push is more
+      # than 15 percent slower or does more work. The macOS runner draws on
+      # its GPU; lavapipe on Linux is too slow to time every page four times.
+      - name: Frame budget
+        if: runner.os == 'macOS' && github.event.before != '0000000000000000000000000000000000000000'
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BEFORE"
+          git worktree add --detach ../base "$BEFORE"
+          if ! grep -q -- '--bench' ../base/examples/showcase/src/main.rs; then
+            echo "::notice::The commit before this push has no frame budget to compare with."
+            exit 0
+          fi
+          cargo build --release --locked -p showcase --manifest-path ../base/Cargo.toml --target-dir target
+          cp target/release/showcase base-showcase
+          cargo build --release --locked -p showcase
+          mkdir -p bench
+          for i in 1 2; do
+            ./base-showcase --bench bench/base-$i.txt
+            target/release/showcase --bench bench/head-$i.txt
+          done
+          target/release/showcase --compare bench/base-1.txt,bench/base-2.txt bench/head-1.txt,bench/head-2.txt

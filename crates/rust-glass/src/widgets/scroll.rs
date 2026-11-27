@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::animation::{Spring, Tuning};
+use crate::animation::{POINTS, Spring, Tuning};
 use crate::color::Color;
 use crate::context::{Id, Sense};
 use crate::geometry::{Rect, Vec2, vec2};
@@ -204,7 +204,7 @@ impl ScrollArea {
                 ax.target = ax.target.clamp(0.0, max[a]) + if o.abs() < 0.4 { 0.0 } else { o * back };
                 ui.ctx.request_repaint();
             }
-            if ax.offset.step(ax.target, Tuning::new(0.17, 1.0), dt) {
+            if ax.offset.step_within(ax.target, Tuning::new(0.17, 1.0), dt, POINTS) {
                 s.last_move = ui.ctx.time;
                 ui.ctx.request_repaint();
             }

@@ -8,8 +8,8 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Try the accessibility tree with VoiceOver on macOS (needs a Mac)
 - [ ] Try the accessibility tree with Orca on Linux (needs a Linux desktop)
 - [ ] Touch gestures with momentum
-- [ ] Frame budget per page in CI: fail when the capture run gets more than 15 percent slower, measured with `RUST_GLASS_FULL_REDRAW=1` now that still frames cost almost nothing
-- [ ] The first frames of a full page blur cost about 24 ms on Intel UHD while the GPU clocks up from idle (album view); blur large surfaces at a lower resolution
+- [ ] The first frames of a full page blur cost about 24 ms on Intel UHD while the GPU clocks up from idle (album view). The sharp copy is gone (about 7.0 to 6.7 ms per frame at full clock); next, draw large blurred glass at half resolution and scale it up
+- [ ] Check after a few pushes whether the frame budget on the macOS runner is steady enough at 15 percent, or needs a third run per side
 
 ### Glass Studio: export settings as Rust
 - [ ] Turn the Material Lab into Glass Studio: sliders for every `Material` field and the theme settings (glass tint, accent, dark mode, contrast, reduce transparency and motion)
@@ -42,11 +42,8 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 
 ### Speed
 - [ ] Several damage rectangles instead of one, for two things that animate far apart
-- [ ] Blur large surfaces from a lower mip level where the result looks the same
-- [ ] Shader variants without dispersion and pinch for materials that turn them off
 - [ ] Automatic quality step on slow GPUs: fewer blur taps and no dispersion when frames run over budget
 - [ ] No allocation per frame in layout, reorder and text paths
-- [ ] Settle springs by visible change, the way morphs now do, so idle windows stop drawing sooner
 
 ## Backlog
 - [ ] Drag and drop between windows and to other apps
@@ -55,6 +52,7 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] egui integration (the approach is in the roadmap)
 
 ## Done (recent)
+- [x] Speed pass (2026-11-27): frame budget per page and per interaction, checked in CI against the commit before; blurred glass skips the sharp copy (captures down about 70 percent); springs stop once their motion no longer shows (a switch rests after 61 frames instead of 153). Shader variants without the lens were measured and dropped: the branches are the same across a draw, so they cost nothing to skip
 - [x] Tweaks pass against iOS 27 footage (2026-11-27): tab bar blob refraction, rainbow edge, size and settle; resting selection shade; soft glass edge; press glow; `Material::liquidity` in the Material Lab; drops that land where they were let go; album view that opened only when the pointer moved
 - [x] Field report from building EqualizeR (2026-11-26): damage tracking with backdrops kept per pass, timed repaints and a waker, hidden drawing for warm pages, press to select in sidebars, unsmoothed and peak frame timings with a trace file, time-based cache retention, a growing glyph atlas, scroll area column and bar options, no panic in short scroll areas, window options for icon, start hidden, title bar and close
 - [x] Docs pass for the v0.3 release: guide, README and roadmap (2026-11-26)

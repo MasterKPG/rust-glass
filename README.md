@@ -89,7 +89,7 @@ cd rust-glass
 cargo run --release -p showcase
 ```
 
-Drop an image on the window to use it as the wallpaper. To render every page to PNG without a window and print timings, run `cargo run --release -p showcase -- --capture captures`.
+Drop an image on the window to use it as the wallpaper. To render every page to PNG without a window and print timings, run `cargo run --release -p showcase -- --capture captures`. `--bench FILE` writes the frame budget of every page and of a set of interactions, and `--compare BASE HEAD` fails when HEAD is more than 15 percent worse than BASE.
 
 ## How the glass is drawn
 

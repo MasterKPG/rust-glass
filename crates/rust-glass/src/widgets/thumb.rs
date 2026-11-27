@@ -1,7 +1,7 @@
 //! The thumb of sliders, switches, segmented controls and the tab bar: an
 //! opaque knob that lifts into a clear lens and changes shape with acceleration.
 
-use crate::animation::{Spring, Tuning};
+use crate::animation::{POINTS, Spring, Tuning};
 use crate::color::Color;
 use crate::context::{Context, Id, Response};
 use crate::geometry::{Rect, Vec2, lerp, vec2};
@@ -157,20 +157,26 @@ impl Thumb {
     ) -> ThumbFrame {
         let dt = ctx.dt;
         let follow = ctx.tuning(follow);
-        let mut moving = self.pos.step(target, follow, dt);
+        let mut moving = self.pos.step_within(target, follow, dt, POINTS);
         // Stay up until nearly home.
         let far = (self.pos.value - target).abs() > rest.x * 0.18;
         let up = raised || (far && self.lift.value > 0.3);
         let t = if up { Tuning::new(0.27, 0.72) } else { flex.settle };
         moving |= self.lift.step(up as u32 as f32, ctx.tuning(t), dt);
-        moving |= self.chase.step(self.pos.velocity, flex.chase, dt);
+        let lift = self.lift.value.max(0.0);
+        let base = rest.lerp(lifted, lift);
+        // The chase is a speed in points per second and shows only through
+        // its rate of change, as a stretch. It stops once what is left of it
+        // changes the size by less than its precision in points.
+        let stretch = base.x.max(base.y) * flex.amount / (flex.at * 1000.0) * (0.2 + 0.8 * lift.min(1.0));
+        let rate = std::f32::consts::TAU / flex.chase.response.max(0.01);
+        let precision = POINTS / (stretch * rate).max(1e-6);
+        moving |= self.chase.step_within(self.pos.velocity, flex.chase, dt, precision);
         if moving {
             ctx.request_repaint();
         }
-        let lift = self.lift.value.max(0.0);
         let u = self.chase.velocity / 1000.0;
         let s = if ctx.theme.reduce_motion { 0.0 } else { flex.amount * (u / flex.at).tanh() };
-        let base = rest.lerp(lifted, lift);
         let w = 1.0 + s * (0.2 + 0.8 * lift.min(1.0));
         ThumbFrame {
             size: vec2(base.x * w.powf(flex.width), base.y / w),

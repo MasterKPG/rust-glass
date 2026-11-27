@@ -115,6 +115,12 @@ impl Headless {
         }
     }
 
+    /// Draws every frame in full when `on`, instead of only the part that
+    /// changed. Use it to time how long a whole frame takes.
+    pub fn set_full_redraw(&mut self, on: bool) {
+        self.renderer.set_full_redraw(on);
+    }
+
     /// Returns `true` if the last frame was drawn only in part, because the
     /// rest did not change.
     pub fn last_frame_partial(&self) -> bool {

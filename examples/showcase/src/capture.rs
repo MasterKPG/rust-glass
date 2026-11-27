@@ -10,17 +10,17 @@ use rust_glass::prelude::*;
 use crate::Showcase;
 use crate::pages::Page;
 
-const DT: f32 = 1.0 / 60.0;
+pub(crate) const DT: f32 = 1.0 / 60.0;
 
 /// Wallpapers by index into `art::WALLPAPERS`.
-const DUNES: usize = 0;
-const PETALS: usize = 1;
-const AURORA: usize = 2;
-const RIBBONS: usize = 3;
-const GRID: usize = 4;
+pub(crate) const DUNES: usize = 0;
+pub(crate) const PETALS: usize = 1;
+pub(crate) const AURORA: usize = 2;
+pub(crate) const RIBBONS: usize = 3;
+pub(crate) const GRID: usize = 4;
 
 /// The wallpaper each page is captured on.
-fn wallpaper_for(page: Page) -> usize {
+pub(crate) fn wallpaper_for(page: Page) -> usize {
     match page {
         Page::Player | Page::Text => DUNES,
         Page::Buttons | Page::Menus | Page::Feedback | Page::Lists => PETALS,
@@ -30,35 +30,35 @@ fn wallpaper_for(page: Page) -> usize {
 }
 
 /// A headless showcase with helpers to drive it.
-struct Rig {
-    host: Headless,
-    app: Showcase,
+pub(crate) struct Rig {
+    pub(crate) host: Headless,
+    pub(crate) app: Showcase,
 }
 
 impl Rig {
-    fn new(width: u32, height: u32, pixels_per_point: f32) -> Result<Self, String> {
+    pub(crate) fn new(width: u32, height: u32, pixels_per_point: f32) -> Result<Self, String> {
         let mut host = Headless::new(width, height, pixels_per_point)?;
         let mut app = Showcase::new();
         app.setup(&mut host.ctx);
         Ok(Self { host, app })
     }
 
-    fn step(&mut self, events: &[Event]) {
+    pub(crate) fn step(&mut self, events: &[Event]) {
         self.host.step(&mut self.app, DT as f64, events);
     }
 
-    fn wait(&mut self, frames: usize) {
+    pub(crate) fn wait(&mut self, frames: usize) {
         for _ in 0..frames {
             self.step(&[]);
         }
     }
 
-    fn settle(&mut self, seconds: f64) {
+    pub(crate) fn settle(&mut self, seconds: f64) {
         self.host.settle(&mut self.app, seconds);
     }
 
     /// Opens `page` on `wallpaper` with the pointer outside the window.
-    fn open(&mut self, page: Page, wallpaper: usize) {
+    pub(crate) fn open(&mut self, page: Page, wallpaper: usize) {
         self.app.page = page;
         self.app.wallpaper = wallpaper;
         self.step(&[Event::PointerUp, Event::Key(Key::Escape)]);
@@ -66,37 +66,37 @@ impl Rig {
         self.settle(1.5);
     }
 
-    fn mark(&self, name: &str) -> Vec2 {
+    pub(crate) fn mark(&self, name: &str) -> Vec2 {
         self.rect(name).center()
     }
 
-    fn rect(&self, name: &str) -> Rect {
+    pub(crate) fn rect(&self, name: &str) -> Rect {
         self.app.pages.marks.rect(name)
     }
 
     /// Where the thumb of the marked slider sits at `value`, from 0 to 1.
-    fn slider_point(&self, name: &str, value: f32) -> Vec2 {
+    pub(crate) fn slider_point(&self, name: &str, value: f32) -> Vec2 {
         let rect = self.rect(name);
         // The thumb is 37 points wide and travels inside the track.
         vec2(rect.min.x + 18.5 + (rect.width() - 37.0) * value, rect.center().y)
     }
 
-    fn move_to(&mut self, at: Vec2) {
+    pub(crate) fn move_to(&mut self, at: Vec2) {
         self.step(&[Event::PointerMoved(at)]);
     }
 
-    fn press(&mut self, at: Vec2) {
+    pub(crate) fn press(&mut self, at: Vec2) {
         self.move_to(at);
         self.step(&[Event::PointerDown]);
     }
 
-    fn click(&mut self, at: Vec2) {
+    pub(crate) fn click(&mut self, at: Vec2) {
         self.press(at);
         self.step(&[Event::PointerUp]);
     }
 
     /// Moves the held pointer from `from` to `to` in `frames` eased steps.
-    fn drag(&mut self, from: Vec2, to: Vec2, frames: usize) {
+    pub(crate) fn drag(&mut self, from: Vec2, to: Vec2, frames: usize) {
         for i in 1..=frames {
             let t = i as f32 / frames as f32;
             self.move_to(from.lerp(to, t * t * (3.0 - 2.0 * t)));
@@ -105,7 +105,7 @@ impl Rig {
 
     /// Scrolls the page until the marked widget is in the upper part of the
     /// window.
-    fn reveal(&mut self, name: &str) {
+    pub(crate) fn reveal(&mut self, name: &str) {
         let below = self.mark(name).y - self.host.ctx.screen.height() * 0.4;
         if below > 0.0 {
             let over = vec2(self.mark(name).x, self.host.ctx.screen.height() * 0.5);
@@ -113,19 +113,19 @@ impl Rig {
         }
     }
 
-    fn scroll(&mut self, over: Vec2, amount: f32) {
+    pub(crate) fn scroll(&mut self, over: Vec2, amount: f32) {
         self.move_to(over);
         self.step(&[Event::Scroll(vec2(0.0, -amount))]);
         self.settle(1.5);
     }
 
-    fn save(&self, path: &str) -> Result<(), String> {
+    pub(crate) fn save(&self, path: &str) -> Result<(), String> {
         let (width, height) = self.size();
         image::save_buffer(path, &self.host.pixels(), width, height, image::ColorType::Rgba8)
             .map_err(|e| e.to_string())
     }
 
-    fn size(&self) -> (u32, u32) {
+    pub(crate) fn size(&self) -> (u32, u32) {
         let screen = self.host.ctx.screen.size() * self.host.ctx.pixels_per_point;
         (screen.x.round() as u32, screen.y.round() as u32)
     }

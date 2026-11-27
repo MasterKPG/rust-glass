@@ -9,11 +9,13 @@
 //! `--capture DIR` renders every page to PNG without a window and prints
 //! timings. `--preview DIR` renders the pictures and clips of the preview
 //! folder. `--motion DIR` renders drops, presses and the album view frame by
-//! frame.
+//! frame. `--bench FILE` writes the frame budget, and `--compare BASE HEAD`
+//! fails when HEAD is more than 15 percent over the budget of BASE.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod art;
+mod bench;
 mod capture;
 mod pages;
 
@@ -178,7 +180,13 @@ fn main() {
         let i = args.iter().position(|a| a == flag)?;
         Some(args.get(i + 1).cloned().unwrap_or_else(|| "captures".into()))
     };
+    let compare = args.iter().position(|a| a == "--compare").map(|i| (args.get(i + 1), args.get(i + 2)));
     let result = match (folder("--capture"), folder("--preview"), folder("--motion")) {
+        _ if compare.is_some() => match compare {
+            Some((Some(base), Some(head))) => bench::compare(base, head),
+            _ => Err("usage: --compare BASE HEAD, each a file or a list of files separated by commas".into()),
+        },
+        _ if folder("--bench").is_some() => bench::run(&folder("--bench").unwrap_or_default()),
         (Some(dir), _, _) => capture::pages(&dir),
         (_, Some(dir), _) => capture::preview(&dir),
         (_, _, Some(dir)) => capture::motion(&dir),

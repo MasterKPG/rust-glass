@@ -642,6 +642,17 @@ fn bar(ui: &mut Ui, open: bool) {
 
 Tunings: `SNAP` (no overshoot), `SMOOTH`, `PRESS` and `BOUNCY`, or `Tuning::new(response, damping)`, with the same meaning as a SwiftUI spring.
 
+A spring stops, and the window goes idle, once the rest of its motion stays within `Spring::PRECISION` (0.002) of the target: half a step of an 8 bit color for opacity, a few thousandths of a pixel for a position in points. A spring you keep yourself whose units are larger, such as a speed in points per second, can stop sooner with `step_within`:
+
+```rust
+use rust_glass::prelude::*;
+
+fn settle_speed(speed: &mut Spring, dt: f32) -> bool {
+    // A tenth of a point per second makes no visible difference.
+    speed.step_within(0.0, Tuning::SMOOTH, dt, 0.1)
+}
+```
+
 `ctx.morph(key, view, rect)` moves an element from one view to another, such as a cover that grows from a grid into a detail page. Call it from whichever view draws the element, with the same key, and draw the element at the rectangle it returns. While the view stays the same the result is `rect`, so scrolling and layout changes follow at once. When the target moves during the trip, the element moves along with it. `ctx.is_morphing(key)` is true while the element is on its way, for example to draw it above the rest of the page.
 
 Call `ctx.request_repaint()` in every frame while something else moves, such as a video. `ctx.dt` is the time since the last frame in seconds and `ctx.time` the time since start.
@@ -782,6 +793,8 @@ fn screenshot(app: &mut impl App) -> Result<Vec<u8>, String> {
     Ok(h.pixels()) // RGBA, 1280 * 800 * 4 bytes
 }
 ```
+
+`h.set_full_redraw(true)` draws every frame in full, so `h.info.gpu` times the whole window rather than the part that changed.
 
 For logic only, drive a `Context` with `begin_frame` and `end_frame`. That needs no GPU. [tests/interaction.rs](https://github.com/MasterKPG/rust-glass/blob/main/crates/rust-glass/tests/interaction.rs) does it for the built in widgets.
 

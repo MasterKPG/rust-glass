@@ -4,7 +4,7 @@
 use std::any::Any;
 use std::hash::Hash;
 
-use crate::animation::{Spring, SpringRect, Tuning};
+use crate::animation::{POINTS, Spring, SpringRect, Tuning};
 use crate::context::{Cursor, Id, Order, Response, Sense};
 use crate::geometry::{Rect, Vec2, smoothstep, vec2};
 use crate::material::{Corner, Glass};
@@ -153,7 +153,7 @@ impl Ui<'_> {
                 }
                 let fly = self.ctx.tuning(Tuning::new(0.36, 0.84));
                 let size = self.ctx.tuning(Tuning::new(0.3, 0.9));
-                moving |= grab.shape.step(rect, fly, size, dt);
+                moving |= grab.shape.step_within(rect, fly, size, dt, POINTS);
             }
         }
         // It stays lifted on the way and sets down once it is over its place.
