@@ -18,6 +18,9 @@ struct PressState {
     press: Spring,
     pull: Spring2d,
     hover: Spring,
+    glow: Spring,
+    /// Where the pointer went down, from the center of the control.
+    glow_at: Vec2,
 }
 
 /// The press response of a control in this frame: the surface swells and
@@ -45,6 +48,9 @@ pub struct PressEffect {
     pub hover: f32,
     /// Rotation for the highlights while pulled sideways, in radians.
     pub bend: f32,
+    /// Light where the pointer pressed: position and strength from 0 to 1.
+    /// It rises at once and fades after the release.
+    pub glow: Option<(Vec2, f32)>,
 }
 
 impl PressEffect {
@@ -71,7 +77,22 @@ impl PressEffect {
             dt,
         );
         shaped |= s.pull.step(pull, response.tuning(Tuning::new(if held { 0.16 } else { 0.42 }, 0.62)), dt);
-        let moving = s.hover.step(r.hovered as u32 as f32, Tuning::SNAP, dt) | shaped;
+        if held && let Some(p) = r.pointer {
+            if r.pressed || s.glow.value < 0.05 {
+                s.glow_at = p - rest.center();
+            } else {
+                // Follows the finger a little, staying on the control.
+                let half = rest.size() * 0.5;
+                let to = (p - rest.center()).max(-half).min(half);
+                s.glow_at = s.glow_at.lerp(to, 0.25);
+            }
+        }
+        let glowing = s.glow.step(
+            held as u32 as f32,
+            if held { Tuning::new(0.16, 1.0) } else { Tuning::new(0.55, 1.0) },
+            dt,
+        );
+        let moving = s.hover.step(r.hovered as u32 as f32, Tuning::SNAP, dt) | shaped | glowing;
         if moving {
             response.request_repaint();
         }
@@ -95,13 +116,18 @@ impl PressEffect {
             amount: s.press.value,
             hover: s.hover.value,
             bend: p.x * 0.018,
+            glow: (s.glow.value > 0.003 && strength > 0.0).then(|| {
+                let k = rect.size().x / size.x.max(1.0);
+                (rect.center() + s.glow_at * k, s.glow.value.clamp(0.0, 1.0))
+            }),
         }
     }
 
     /// Applies the effect to the glass of the widget.
     pub fn apply(&self, glass: &mut Glass) {
         let press = self.amount.max(0.0);
-        glass.brightness = 0.05 * press;
+        glass.brightness = 0.02 * press;
+        glass.glow = self.glow;
         glass.light_bend = self.bend;
         glass.material.refraction *= 1.0 + 0.25 * press;
         glass.material.shadow *= 1.0 + 0.35 * press;

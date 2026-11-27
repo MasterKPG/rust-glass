@@ -39,7 +39,8 @@ impl Widget for ColorPicker<'_> {
         m.tint = Some(self.color.alpha(0.95));
         m.tint_follow = 0.4;
         let mut g = Glass::new(gel.rect, Corner::Capsule, m);
-        g.brightness = 0.05 * gel.amount.max(0.0);
+        g.brightness = 0.02 * gel.amount.max(0.0);
+        g.glow = gel.glow;
         ui.painter().glass(&g);
 
         #[derive(Clone, Copy, Default)]

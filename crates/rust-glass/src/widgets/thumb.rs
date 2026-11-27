@@ -83,15 +83,47 @@ pub struct ThumbFlex {
     pub at: f32,
     /// Part of the change the width takes on. 1 keeps the area.
     pub width: f32,
+    /// How the lens sinks back into the knob once it is home.
+    pub settle: Tuning,
 }
 
 impl ThumbFlex {
     /// Thumbs, fitted to the reference footage.
-    pub const THUMB: ThumbFlex =
-        ThumbFlex { chase: Tuning::new(0.628, 0.5), amount: 0.159, at: 2.4, width: 1.0 };
-    /// The blob of a tab bar: softer, and the width gives less than the height.
-    pub const BLOB: ThumbFlex =
-        ThumbFlex { chase: Tuning::new(1.227, 0.625), amount: 0.219, at: 2.3, width: 0.6 };
+    pub const THUMB: ThumbFlex = ThumbFlex {
+        chase: Tuning::new(0.628, 0.5),
+        amount: 0.159,
+        at: 2.4,
+        width: 1.0,
+        settle: Tuning::new(0.36, 0.76),
+    };
+    /// The blob of a tab bar, fitted to the iOS 27 clips: it stretches wide
+    /// as it lands and settles without a wobble.
+    pub const BLOB: ThumbFlex = ThumbFlex {
+        chase: Tuning::new(0.42, 0.86),
+        amount: 0.20,
+        at: 2.3,
+        width: 1.0,
+        settle: Tuning::new(0.20, 0.95),
+    };
+
+    /// Returns the flex for a material of `liquidity` (see
+    /// [`Material::liquidity`](crate::Material::liquidity)). 0.5 keeps it as
+    /// it is, 0 makes it rigid, 1 stretches more and wobbles longer.
+    pub fn liquid(self, liquidity: f32) -> ThumbFlex {
+        let l = liquidity.clamp(0.0, 1.0);
+        let (amount, response, damping) = if l <= 0.5 {
+            let t = l / 0.5;
+            (self.amount * t, lerp(0.25, self.chase.response, t), lerp(1.0, self.chase.damping, t))
+        } else {
+            let t = (l - 0.5) / 0.5;
+            (
+                self.amount * (1.0 + 0.6 * t),
+                self.chase.response * (1.0 + 1.4 * t),
+                self.chase.damping * (1.0 - 0.35 * t),
+            )
+        };
+        ThumbFlex { chase: Tuning::new(response, damping), amount, ..self }
+    }
 }
 
 impl Thumb {
@@ -107,7 +139,8 @@ impl Thumb {
     ) -> ThumbFrame {
         // Larger controls travel further for the same feel.
         let k = (rest.y / 24.0).clamp(1.0, 3.0);
-        let flex = ThumbFlex { at: ThumbFlex::THUMB.at * k, ..ThumbFlex::THUMB };
+        let flex =
+            ThumbFlex { at: ThumbFlex::THUMB.at * k, ..ThumbFlex::THUMB }.liquid(ctx.theme.lens.liquidity);
         self.step_flex(ctx, target, follow, raised, rest, lifted, flex)
     }
 
@@ -128,7 +161,7 @@ impl Thumb {
         // Stay up until nearly home.
         let far = (self.pos.value - target).abs() > rest.x * 0.18;
         let up = raised || (far && self.lift.value > 0.3);
-        let t = if up { Tuning::new(0.27, 0.72) } else { Tuning::new(0.36, 0.76) };
+        let t = if up { Tuning::new(0.27, 0.72) } else { flex.settle };
         moving |= self.lift.step(up as u32 as f32, ctx.tuning(t), dt);
         moving |= self.chase.step(self.pos.velocity, flex.chase, dt);
         if moving {
@@ -248,15 +281,20 @@ mod tests {
     }
 
     #[test]
-    fn blob_gives_more_in_height_than_in_width() {
+    fn blob_stretches_and_settles_without_a_wobble() {
+        // The iOS 27 blob keeps its area as it stretches, and is round again
+        // a moment after it stops.
         let mut ctx = Context::new();
         let mut d = Thumb::default();
-        let lifted = vec2(104.0, 72.4);
+        let lifted = vec2(116.0, 82.0);
         let (mut lo, mut hi) = (lifted, lifted);
-        for i in 0..360 {
+        let mut settled_at = None;
+        for i in 0..240 {
             let t = i as f32 / 60.0;
             ctx.begin_frame(vec2(800.0, 200.0), 1.0, t as f64, &[] as &[Event]);
-            let x = 200.0 + 150.0 * (t * 3.5).sin();
+            // Two quick sweeps, then a stop at frame 120.
+            let x =
+                if i < 120 { 200.0 + 150.0 * (t * 6.0).sin() } else { 200.0 + 150.0 * (2.0f32 * 6.0).sin() };
             let f = d.step_flex(
                 &mut ctx,
                 x,
@@ -267,15 +305,20 @@ mod tests {
                 ThumbFlex::BLOB,
             );
             ctx.end_frame();
-            if i > 120 {
+            if (30..120).contains(&i) {
                 lo = lo.min(f.size);
                 hi = hi.max(f.size);
+                assert!((f.size.x * f.size.y / (lifted.x * lifted.y) - 1.0).abs() < 0.02, "{:?}", f.size);
+            }
+            // The last frame it is still out of shape.
+            if i >= 120 && (f.size - lifted).length() >= 1.0 {
+                settled_at = Some(i - 120);
             }
         }
-        // The extremes of the reference clip are 96 to 113 wide and 63 to 84 high.
-        assert!(lo.x > 90.0 && hi.x < 116.0, "{lo:?} {hi:?}");
-        assert!(lo.y > 58.0 && hi.y < 94.0, "{lo:?} {hi:?}");
-        assert!(hi.y - lo.y > hi.x - lo.x, "{lo:?} {hi:?}");
+        assert!(hi.x - lo.x > 10.0, "{lo:?} {hi:?}");
+        assert!(hi.x < lifted.x * 1.25 && lo.y > lifted.y * 0.8, "{lo:?} {hi:?}");
+        let settled = settled_at.unwrap_or(0);
+        assert!(settled < 24, "settled after {settled} frames");
     }
 
     #[test]

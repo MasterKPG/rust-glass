@@ -4,7 +4,7 @@
 use rust_glass::prelude::*;
 
 /// Height of the parameter panel.
-const PANEL_HEIGHT: f32 = 344.0;
+const PANEL_HEIGHT: f32 = 374.0;
 
 pub struct State {
     pub material: Material,
@@ -61,9 +61,18 @@ fn lens(state: &mut State, ctx: &mut Context, area: Rect) {
         state.position = (state.position + response.delta).max(area.min).min(area.max);
         ctx.request_repaint();
     }
-    let motion = ctx.animate_vec2(Id::new("lens position"), state.position, Tuning::new(0.22, 0.55));
+    // Liquid glass trails the pointer on a looser spring and stretches more
+    // with its speed. At 0 it follows like a rigid piece.
+    let liquidity = state.material.liquidity.clamp(0.0, 1.0);
+    let mix = |a: f32, b: f32| a + (b - a) * liquidity;
+    let damping = mix(1.0, 0.38);
+    let response = mix(0.14, 0.30);
+    let motion = ctx.animate_vec2(Id::new("lens position"), state.position, Tuning::new(response, damping));
     let velocity = motion.velocity();
-    let stretch = vec2((velocity.x.abs() / 5000.0).min(0.2), (velocity.y.abs() / 5000.0).min(0.2));
+    let give = 2.0 * liquidity;
+    let limit = 0.1 + 0.2 * liquidity;
+    let stretch =
+        vec2((velocity.x.abs() / 5000.0 * give).min(limit), (velocity.y.abs() / 5000.0 * give).min(limit));
     let body = Rect::from_center_size(
         motion.value(),
         vec2(size.x * (1.0 + stretch.x - stretch.y * 0.6), size.y * (1.0 + stretch.y - stretch.x * 0.6)),
@@ -98,6 +107,7 @@ fn parameters(state: &mut State, ui: &mut Ui) {
         ("Shadow", &mut m.shadow, 0.0, 0.6),
         ("Shadow color", &mut m.shadow_tint, 0.0, 1.0),
         ("Shadow size", &mut m.shadow_radius, 2.0, 60.0),
+        ("Liquidity", &mut m.liquidity, 0.0, 1.0),
         ("Lens size", &mut state.size, 60.0, 260.0),
     ];
     let rows = sliders.len().div_ceil(3);

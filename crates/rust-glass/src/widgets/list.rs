@@ -11,6 +11,10 @@ use crate::text::{TextStyle, Weight};
 use crate::ui::Ui;
 
 /// Vertical navigation list with a sliding highlight. Returns true on change.
+///
+/// A row is selected as soon as the button goes down, as in a sidebar on
+/// macOS, and the frame runs again before it is shown, so content drawn
+/// before the list already shows the new selection.
 pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bool {
     let before = *selected;
     let w = ui.available_width();
@@ -29,7 +33,7 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
     let c = ui.surface.strong_fill_color();
     ui.painter().fill(hl, Corner::Capsule, c);
     for (i, (icon, label)) in items.iter().enumerate() {
-        let r = ui.allocate_response(vec2(w, h), Sense::Click);
+        let r = ui.allocate_response(vec2(w, h), Sense::Press);
         ui.ctx.focusable(r.id);
         if r.clicked {
             *selected = i;
@@ -53,7 +57,11 @@ pub fn nav_list(ui: &mut Ui, selected: &mut usize, items: &[(Icon, &str)]) -> bo
         ui.focus_ring(r.id, r.rect, Corner::Capsule);
     }
     ui.spacing = old;
-    before != *selected
+    let changed = before != *selected;
+    if changed {
+        ui.ctx.request_relayout();
+    }
+    changed
 }
 
 /// Groups the widgets added in `f` on a card that starts with `title`.

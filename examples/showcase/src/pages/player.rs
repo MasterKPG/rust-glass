@@ -90,7 +90,10 @@ pub fn show(state: &mut State, marks: &mut Marks, covers: &[ImageId], ctx: &mut 
         // flying cover is on a layer of its own and stays sharp.
         ui.painter().blur(sheet.shrink(1.0), 25.0, 8.0 * (1.0 - appear));
         if state.album != before {
+            // The click came in a frame that still drew the old view. Ask for
+            // the next one now, or the window waits for the pointer to move.
             state.appear = Spring::new(0.0);
+            ui.ctx.request_repaint();
         }
     });
 

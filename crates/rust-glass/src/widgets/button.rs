@@ -300,7 +300,8 @@ impl<'a> ButtonGroup<'a> {
         let m = ui.ctx.theme.regular;
         let mut glass = Glass::new(bar, Corner::Capsule, m);
         let a = ui.ctx.prepare_glass(id, &mut glass, true);
-        glass.brightness = 0.04 * press;
+        glass.brightness = 0.02 * press;
+        glass.glow = gels.iter().filter_map(|g| g.0.glow).max_by(|a, b| a.1.total_cmp(&b.1));
         let color = a.surface().text_color();
         let hl = a.surface().fill_color();
         let mut p = ui.painter();
@@ -383,7 +384,8 @@ impl<'a> SplitButton<'a> {
         let m = ui.ctx.theme.regular;
         let mut glass = Glass::group(shapes, m).fuse(fuse);
         let a = ui.ctx.prepare_glass(id, &mut glass, true);
-        glass.brightness = 0.05 * gel.amount.max(0.0);
+        glass.brightness = 0.02 * gel.amount.max(0.0);
+        glass.glow = faces.iter().filter_map(|f| f.0.glow).chain(gel.glow).max_by(|a, b| a.1.total_cmp(&b.1));
         let color = a.surface().text_color();
         let t = ui.ctx.animate(id.with("rot"), open as u32 as f32, Tuning::BOUNCY);
         let mut p = ui.painter();

@@ -57,15 +57,17 @@ pub mod widgets;
 #[doc = include_str!("../GUIDE.md")]
 pub mod guide {}
 
-pub use app::{App, FrameInfo, FrameStats, Options, run};
+pub use app::{App, FrameInfo, FrameStats, FrameTimes, Options, WindowIcon, run};
 pub use color::Color;
-pub use context::{Context, Id, Order, Response, Sense};
+pub use context::{Context, Id, Order, Response, Sense, Waker};
 pub use geometry::{Rect, Vec2, rect, vec2};
 pub use icon::Icon;
 pub use material::{Corner, Glass, GlassShape, Material};
 pub use paint::{ImageId, Painter};
 pub use theme::{Surface, Theme};
 pub use ui::{Ui, Widget};
+/// The windowing library rust-glass runs on, for [`App::window_created`].
+pub use winit;
 
 /// Everything an app usually needs: `use rust_glass::prelude::*;`
 pub mod prelude {

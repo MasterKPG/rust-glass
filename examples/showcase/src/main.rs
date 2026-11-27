@@ -8,7 +8,8 @@
 //!
 //! `--capture DIR` renders every page to PNG without a window and prints
 //! timings. `--preview DIR` renders the pictures and clips of the preview
-//! folder.
+//! folder. `--motion DIR` renders drops, presses and the album view frame by
+//! frame.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -177,9 +178,10 @@ fn main() {
         let i = args.iter().position(|a| a == flag)?;
         Some(args.get(i + 1).cloned().unwrap_or_else(|| "captures".into()))
     };
-    let result = match (folder("--capture"), folder("--preview")) {
-        (Some(dir), _) => capture::pages(&dir),
-        (_, Some(dir)) => capture::preview(&dir),
+    let result = match (folder("--capture"), folder("--preview"), folder("--motion")) {
+        (Some(dir), _, _) => capture::pages(&dir),
+        (_, Some(dir), _) => capture::preview(&dir),
+        (_, _, Some(dir)) => capture::motion(&dir),
         _ => run(
             Options { title: "rust-glass showcase".into(), size: (1180.0, 800.0), ..Default::default() },
             Showcase::new(),

@@ -410,7 +410,15 @@ impl Widget for TextEdit<'_> {
         let origin = inner.min - off;
         let caret_on = r.focused && (composing.is_some() || ((now - e.blink) % 1.06) < 0.56);
         if r.focused {
-            ui.ctx.request_repaint();
+            if r.held {
+                // Dragging past the edge scrolls a little every frame.
+                ui.ctx.request_repaint();
+            } else if composing.is_none() {
+                // Wake up for the next blink only.
+                let phase = (now - e.blink) % 1.06;
+                let next = if phase < 0.56 { 0.56 - phase } else { 1.06 - phase };
+                ui.ctx.request_repaint_after(std::time::Duration::from_secs_f64(next.max(0.001)));
+            }
             let c = origin + vec2(cx, cy);
             ui.ctx.ime_area = Some(Rect { min: c, max: c + vec2(1.0, ch) });
         }

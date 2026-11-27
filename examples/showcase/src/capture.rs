@@ -149,12 +149,13 @@ pub fn pages(dir: &str) -> Result<(), String> {
         let gpu = rig.host.info.gpu;
         let gpu_ms = gpu.gpu_ms.map_or("n/a".to_string(), |ms| format!("{ms:.2}"));
         report += &format!(
-            "{:<20} ui {ui_ms:.2} ms, encode {encode_ms:.2} ms, gpu {gpu_ms} ms, {} passes, {} glass, {} shapes, {} kpx captured\n",
+            "{:<20} ui {ui_ms:.2} ms, encode {encode_ms:.2} ms, gpu {gpu_ms} ms, {} passes, {} glass, {} shapes, {} kpx captured, {} kpx redrawn\n",
             page.title(),
             gpu.passes,
             gpu.glasses,
             gpu.shapes,
-            gpu.captured_px / 1000
+            gpu.captured_px / 1000,
+            gpu.redrawn_px / 1000
         );
         rig.save(&format!("{dir}/page_{i:02}.png"))?;
     }
@@ -425,4 +426,112 @@ pub fn preview(dir: &str) -> Result<(), String> {
         events
     })?;
     std::fs::write(format!("{dir}/crops.txt"), crops).map_err(|e| e.to_string())
+}
+
+/// Renders motion as numbered frames, 60 per second, in `dir/NAME/`: the
+/// drops of the Lists page, button and tab presses in light and dark, and the
+/// album view opening. Frame timings of the album go to `dir/album.txt`.
+pub fn motion(dir: &str) -> Result<(), String> {
+    let mut rig = Rig::new(1770, 1170, 1.5)?;
+    let record = |rig: &mut Rig, name: &str, frames: usize, events: &mut dyn FnMut(usize) -> Vec<Event>| {
+        let folder = format!("{dir}/{name}");
+        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        for i in 0..frames {
+            let list = events(i);
+            rig.step(&list);
+            rig.save(&format!("{folder}/{i:04}.png"))?;
+        }
+        Ok::<(), String>(())
+    };
+
+    // Reorder: the first task goes down two places and is let go.
+    rig.open(Page::Lists, PETALS);
+    rig.scroll(rig.mark("long list") + vec2(0.0, -150.0), 720.0);
+    let tasks = rig.rect("task list");
+    let first = vec2(tasks.min.x + 60.0, tasks.min.y + 20.0);
+    let to = first + vec2(14.0, 100.0);
+    record(&mut rig, "reorder", 90, &mut |i| match i {
+        0 => vec![Event::PointerMoved(first), Event::PointerDown],
+        1..=10 => vec![],
+        11..=24 => {
+            let t = (i - 10) as f32 / 14.0;
+            vec![Event::PointerMoved(first.lerp(to, t * t * (3.0 - 2.0 * t)))]
+        }
+        40 => vec![Event::PointerUp],
+        _ => vec![],
+    })?;
+
+    // Between lists: a card from "To do" is let go over "Done", away from
+    // where it will land.
+    rig.open(Page::Lists, PETALS);
+    rig.scroll(rig.mark("long list") + vec2(0.0, -150.0), 720.0);
+    let todo = rig.rect("todo list");
+    let done = rig.rect("done list");
+    let card = vec2(todo.min.x + 60.0, todo.min.y + 50.0);
+    let over = vec2(done.center().x + 40.0, done.max.y - 30.0);
+    record(&mut rig, "between", 90, &mut |i| match i {
+        0 => vec![Event::PointerMoved(card), Event::PointerDown],
+        1..=10 => vec![],
+        11..=30 => {
+            let t = (i - 10) as f32 / 20.0;
+            vec![Event::PointerMoved(card.lerp(over, t * t * (3.0 - 2.0 * t)))]
+        }
+        40 => vec![Event::PointerUp],
+        _ => vec![],
+    })?;
+
+    // Presses held for half a second, in light and dark.
+    for (name, appearance) in [("press_light", 1), ("press_dark", 2)] {
+        rig.app.appearance = appearance;
+        rig.open(Page::Buttons, PETALS);
+        let at = rig.mark("regular button") + vec2(-20.0, 4.0);
+        record(&mut rig, name, 70, &mut |i| match i {
+            0 => vec![Event::PointerMoved(at), Event::PointerDown],
+            30 => vec![Event::PointerUp],
+            _ => vec![],
+        })?;
+    }
+    for (name, appearance) in [("tabs_light", 1), ("tabs_dark", 2)] {
+        rig.app.appearance = appearance;
+        rig.open(Page::Selection, RIBBONS);
+        let tabs = rig.mark("tab bar");
+        let from = tabs - vec2(154.0, 0.0);
+        let to = tabs - vec2(0.0, 0.0);
+        record(&mut rig, name, 100, &mut |i| match i {
+            0 => vec![Event::PointerMoved(from), Event::PointerDown],
+            21..=40 => {
+                let t = (i - 20) as f32 / 20.0;
+                vec![Event::PointerMoved(from.lerp(to, t * t * (3.0 - 2.0 * t)))]
+            }
+            60 => vec![Event::PointerUp],
+            _ => vec![],
+        })?;
+    }
+    rig.app.appearance = 0;
+
+    // The album view, opened and closed three times, with the time of each
+    // frame.
+    let mut report = String::new();
+    rig.open(Page::Player, DUNES);
+    rig.scroll(rig.mark("player content"), -1000.0);
+    for round in 0..3 {
+        rig.click(rig.mark("first album"));
+        for i in 0..40 {
+            let t = std::time::Instant::now();
+            rig.step(&[]);
+            let wall = t.elapsed().as_secs_f64() * 1000.0;
+            let info = &rig.host.info;
+            let gpu = info.gpu.gpu_ms_last.map_or("n/a".into(), |ms| format!("{ms:.2}"));
+            report += &format!(
+                "open {round} frame {i:02}: wall {wall:.2} ms, ui {:.2} ms, gpu {gpu} ms, {} passes, {} kpx captured
+",
+                info.ui_ms,
+                info.gpu.passes,
+                info.gpu.captured_px / 1000
+            );
+        }
+        rig.click(rig.mark("album back"));
+        rig.settle(2.0);
+    }
+    std::fs::write(format!("{dir}/album.txt"), report).map_err(|e| e.to_string())
 }

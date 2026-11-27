@@ -1,7 +1,7 @@
 //! Runs an app without a window: scripted input, fixed time steps, pixels
 //! back. Use it for tests and to render screenshots.
 
-use crate::app::{App, FrameInfo, run_ui};
+use crate::app::{App, FrameInfo, FrameTimes, Peaks, run_ui};
 use crate::context::Context;
 use crate::geometry::{Vec2, vec2};
 use crate::gpu::{Gpu, Renderer};
@@ -21,6 +21,7 @@ pub struct Headless {
     time: f64,
     /// Timings of the last frame.
     pub info: FrameInfo,
+    peaks: Peaks,
 }
 
 impl Headless {
@@ -54,6 +55,7 @@ impl Headless {
             ppp,
             time: 0.0,
             info: FrameInfo::default(),
+            peaks: Peaks::default(),
         })
     }
 
@@ -77,7 +79,7 @@ impl Headless {
         for u in self.ctx.uploads.drain(..) {
             self.renderer.add_image(u.w, u.h, &u.rgba);
         }
-        self.renderer.upload_atlas(&mut self.ctx.text.uploads);
+        self.renderer.upload_atlas(&mut self.ctx.text);
         for id in self.ctx.removed_images.drain(..) {
             self.renderer.remove_image(id);
         }
@@ -89,17 +91,35 @@ impl Headless {
         let stats = self.renderer.poll_stats();
         self.ctx.apply_stats(&stats);
         self.info.gpu = self.renderer.frame_stats;
+        let last = FrameTimes {
+            ui_ms: self.info.ui_ms,
+            encode_ms: self.info.encode_ms,
+            gpu_ms: self.info.gpu.gpu_ms_last,
+            interval_ms: (dt * 1000.0) as f32,
+        };
+        self.info.last = last;
+        self.info.peak = self.peaks.add(self.time, last);
     }
 
     /// Runs frames of 1/60 second until nothing animates any more, for at most
-    /// `max` seconds.
+    /// `max` seconds. Frames asked for later with
+    /// [`Context::request_repaint_after`](crate::Context::request_repaint_after)
+    /// count too, as long as they fall before the end.
     pub fn settle(&mut self, app: &mut dyn App, max: f64) {
         let end = self.time + max;
         let mut quiet = 0;
         while self.time < end && quiet < 6 {
             self.step(app, 1.0 / 60.0, &[]);
-            quiet = if self.ctx.wants_repaint() { 0 } else { quiet + 1 };
+            let waiting = self.ctx.repaint_deadline().is_some_and(|at| at <= end);
+            quiet = if self.ctx.wants_repaint() || waiting { 0 } else { quiet + 1 };
         }
+    }
+
+    /// Returns `true` if the last frame was drawn only in part, because the
+    /// rest did not change.
+    pub fn last_frame_partial(&self) -> bool {
+        let (w, h) = (self.size.0.next_multiple_of(32) as u64, self.size.1.next_multiple_of(32) as u64);
+        self.info.gpu.redrawn_px < w * h
     }
 
     /// Returns the pixels of the last frame, row by row, in RGBA order with 8

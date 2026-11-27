@@ -134,9 +134,10 @@ pub fn show(state: &mut State, marks: &mut Marks, ui: &mut Ui) {
                         ui.drop_zone::<(usize, usize), _>(("board", board), vec2(width, 150.0), |ui| {
                             ui.spacing = 6.0;
                             for (i, task) in items.iter().enumerate() {
-                                ui.drag_source(("card", task.as_str()), (board, i), |ui| {
-                                    task_row(ui, task, width)
-                                });
+                                // The same id in both lists, so a card lands
+                                // where it is let go.
+                                let id = Id::new(("card", task.as_str()));
+                                ui.drag_source_id(id, (board, i), |ui| task_row(ui, task, width));
                             }
                         })
                     });

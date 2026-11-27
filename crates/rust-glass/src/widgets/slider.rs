@@ -304,7 +304,8 @@ impl Widget for Stepper<'_> {
             let m = ui.ctx.theme.regular;
             let mut g = crate::material::Glass::new(bar, Corner::Capsule, m);
             color = ui.ctx.prepare_glass(id, &mut g, true).surface().text_color();
-            g.brightness = 0.04 * ga.amount.max(gb.amount).max(0.0);
+            g.brightness = 0.02 * ga.amount.max(gb.amount).max(0.0);
+            g.glow = ga.glow.into_iter().chain(gb.glow).max_by(|a, b| a.1.total_cmp(&b.1));
             ui.painter().glass(&g);
         }
         let sep = color.alpha(0.16);

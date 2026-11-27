@@ -8,8 +8,8 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Try the accessibility tree with VoiceOver on macOS (needs a Mac)
 - [ ] Try the accessibility tree with Orca on Linux (needs a Linux desktop)
 - [ ] Touch gestures with momentum
-- [ ] Frame budget per page in CI: fail when the capture run gets more than 15 percent slower
-- [ ] Profile the album view on an integrated GPU in a real window, where it felt slow
+- [ ] Frame budget per page in CI: fail when the capture run gets more than 15 percent slower, measured with `RUST_GLASS_FULL_REDRAW=1` now that still frames cost almost nothing
+- [ ] The first frames of a full page blur cost about 24 ms on Intel UHD while the GPU clocks up from idle (album view); blur large surfaces at a lower resolution
 
 ### Glass Studio: export settings as Rust
 - [ ] Turn the Material Lab into Glass Studio: sliders for every `Material` field and the theme settings (glass tint, accent, dark mode, contrast, reduce transparency and motion)
@@ -41,7 +41,7 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Concentric corners: children take the radius of their container minus the padding
 
 ### Speed
-- [ ] Skip the backdrop copy and blur when nothing under a glass element changed
+- [ ] Several damage rectangles instead of one, for two things that animate far apart
 - [ ] Blur large surfaces from a lower mip level where the result looks the same
 - [ ] Shader variants without dispersion and pinch for materials that turn them off
 - [ ] Automatic quality step on slow GPUs: fewer blur taps and no dispersion when frames run over budget
@@ -51,11 +51,12 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 ## Backlog
 - [ ] Drag and drop between windows and to other apps
 - [ ] Nested submenus
-- [ ] Render only the damaged part of the window
 - [ ] Image tests against stored reference renders
 - [ ] egui integration (the approach is in the roadmap)
 
 ## Done (recent)
+- [x] Tweaks pass against iOS 27 footage (2026-11-27): tab bar blob refraction, rainbow edge, size and settle; resting selection shade; soft glass edge; press glow; `Material::liquidity` in the Material Lab; drops that land where they were let go; album view that opened only when the pointer moved
+- [x] Field report from building EqualizeR (2026-11-26): damage tracking with backdrops kept per pass, timed repaints and a waker, hidden drawing for warm pages, press to select in sidebars, unsmoothed and peak frame timings with a trace file, time-based cache retention, a growing glyph atlas, scroll area column and bar options, no panic in short scroll areas, window options for icon, start hidden, title bar and close
 - [x] Docs pass for the v0.3 release: guide, README and roadmap (2026-11-26)
 - [x] Polish pass (2026-11-26): gauge labels fit their ring with padding, flat progress bar, collapsing sections without a stall, menus and context menus that close in one motion, overlay blur that fades with the overlay, button labels without shake, a grab animation for drag sources, and album morphs that settle as soon as they are in place
 - [x] Preview pictures and clips rendered again from the new showcase (2026-11-26)

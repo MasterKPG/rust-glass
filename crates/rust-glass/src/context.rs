@@ -67,8 +67,12 @@ pub enum Order {
 pub enum Sense {
     /// Only hovering. It still blocks the widgets below it.
     Hover,
-    /// Clicks.
+    /// Clicks, reported when the button is released over the widget.
     Click,
+    /// Clicks reported as soon as the button goes down, for controls that
+    /// select, such as rows of a sidebar. Like a sidebar on macOS, the
+    /// selection does not wait for the release.
+    Press,
     /// Clicks and drags.
     Drag,
 }
@@ -124,6 +128,24 @@ pub struct Response {
 }
 
 impl Response {
+    /// A response where nothing happened.
+    pub(crate) fn idle(id: Id, rect: Rect, pointer: Option<Vec2>) -> Self {
+        Response {
+            id,
+            rect,
+            hovered: false,
+            held: false,
+            pressed: false,
+            released: false,
+            clicked: false,
+            double_clicked: false,
+            secondary_clicked: false,
+            focused: false,
+            changed: false,
+            delta: Vec2::ZERO,
+            pointer,
+        }
+    }
     /// Returns [`Response::clicked`].
     pub fn clicked(&self) -> bool {
         self.clicked
@@ -165,6 +187,7 @@ struct Adapt {
     dark: Spring,
     boost: Spring,
     used: u64,
+    used_time: f64,
 }
 
 /// How a glass element should look over what is behind it. Returned by
@@ -193,6 +216,28 @@ pub enum HostCommand {
     OpenUrl(String),
     /// Close the window and end [`run`](crate::run).
     Close,
+    /// Hide the window. The app keeps running and can show it again.
+    Hide,
+    /// Show the window and bring it to the front.
+    Show,
+}
+
+/// Wakes the window from another thread, for example when a download
+/// finishes. Get one from [`Context::waker`]. Cloning is cheap.
+#[derive(Clone)]
+pub struct Waker(pub(crate) std::sync::Arc<dyn Fn() + Send + Sync>);
+
+impl Waker {
+    /// Asks the window for a new frame. Safe to call from any thread.
+    pub fn wake(&self) {
+        (self.0)();
+    }
+}
+
+impl std::fmt::Debug for Waker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Waker")
+    }
 }
 
 pub(crate) struct ImageUpload {
@@ -237,7 +282,12 @@ pub struct Context {
     /// candidates. The field sets it every frame it has focus.
     pub ime_area: Option<Rect>,
     next_image: u32,
-    states: HashMap<(Id, TypeId), (Box<dyn Any>, u64)>,
+    /// State by id: the value, and the frame and time it was last used.
+    states: HashMap<(Id, TypeId), Stored>,
+    retention: f64,
+    hidden: u32,
+    repaint_at: Option<f64>,
+    waker: Option<Waker>,
     layers: Vec<Layer>,
     z_top: u64,
     hits: Vec<Hit>,
@@ -267,6 +317,9 @@ pub struct Context {
     drag: Option<Drag>,
     morphs: HashMap<Id, Morph>,
 }
+
+/// A widget's state, with the frame and time it was last used.
+type Stored = (Box<dyn Any>, u64, f64);
 
 /// An element shown by one view after another. See [`Context::morph`].
 #[derive(Clone, Copy)]
@@ -315,6 +368,10 @@ impl Context {
             ime_area: None,
             next_image: 1,
             states: HashMap::new(),
+            retention: 300.0,
+            hidden: 0,
+            repaint_at: None,
+            waker: None,
             layers: Vec::new(),
             z_top: 0,
             hits: Vec::new(),
@@ -358,6 +415,8 @@ impl Context {
         self.cursor = Cursor::Default;
         self.repaint = false;
         self.relayout = false;
+        self.repaint_at = None;
+        self.hidden = 0;
         self.ime_area = None;
         self.reveal_rect = None;
         self.input.begin(events, time);
@@ -372,7 +431,7 @@ impl Context {
         self.paint.glass_tint = self.theme.glass_tint;
         self.paint.reduce_transparency = self.theme.reduce_transparency;
         self.paint.increase_contrast = self.theme.increase_contrast;
-        self.text.begin_frame(ppp);
+        self.text.begin_frame(ppp, time);
 
         std::mem::swap(&mut self.hits, &mut self.prev_hits);
         self.hits.clear();
@@ -476,10 +535,13 @@ impl Context {
             self.focus = None;
         }
         // Forget the state of widgets that have not been drawn for a while.
+        // Both the frames and the time must have passed, so a window that
+        // draws all the time, such as one with a level meter, keeps the state
+        // of a page it left a moment ago.
         if self.frame.is_multiple_of(600) {
-            let f = self.frame;
-            self.states.retain(|_, v| f - v.1 < 1200);
-            self.adapt.retain(|_, a| f - a.used < 1200);
+            let (f, now, keep) = (self.frame, self.time, self.retention);
+            self.states.retain(|_, v| f - v.1 < 1200 || now - v.2 < keep);
+            self.adapt.retain(|_, a| f - a.used < 1200 || now - a.used_time < keep);
             self.morphs.retain(|_, m| f - m.seen < 1200);
         }
         let mut order: Vec<usize> =
@@ -496,6 +558,10 @@ impl Context {
         if self.input.pending() || self.text.needs_rebuild() {
             self.repaint = true;
         }
+        // Glyphs drawn before the atlas grew point at the old layout of it.
+        if self.text.take_grown() {
+            self.relayout = true;
+        }
     }
 
     /// Asks for another frame as soon as possible. Call it every frame while
@@ -507,10 +573,85 @@ impl Context {
     pub fn wants_repaint(&self) -> bool {
         self.repaint
     }
+    /// Asks for a frame once `delay` has passed, such as the next blink of a
+    /// caret or the next reading of a meter. The window sleeps until then.
+    /// The earliest request of a frame wins.
+    ///
+    /// ```
+    /// # use rust_glass::prelude::*;
+    /// # fn f(ctx: &mut Context) {
+    /// // A meter that updates 25 times a second.
+    /// ctx.request_repaint_after(std::time::Duration::from_millis(40));
+    /// # }
+    /// ```
+    pub fn request_repaint_after(&mut self, delay: std::time::Duration) {
+        let at = self.time + delay.as_secs_f64();
+        self.repaint_at = Some(self.repaint_at.map_or(at, |old| old.min(at)));
+    }
+    /// Returns when a frame was asked for with [`Self::request_repaint_after`],
+    /// in seconds since the start like [`Self::time`].
+    pub fn repaint_deadline(&self) -> Option<f64> {
+        self.repaint_at
+    }
+    /// Returns a [`Waker`] that asks for a frame from another thread, or
+    /// `None` without a window, as in [`Headless`](crate::headless::Headless).
+    pub fn waker(&self) -> Option<Waker> {
+        self.waker.clone()
+    }
+    pub(crate) fn set_waker(&mut self, waker: Waker) {
+        self.waker = Some(waker);
+    }
+    /// Keeps the state of widgets that are not drawn for at least `keep`.
+    /// State is dropped only when both this time and 1200 frames have passed
+    /// since it was last used. The default is five minutes.
+    pub fn set_retention(&mut self, keep: std::time::Duration) {
+        self.retention = keep.as_secs_f64();
+    }
     /// Tells the host that sizes used for layout this frame were guesses. The
     /// frame runs again before it is shown.
+    ///
+    /// Call it too when input changed state that was already drawn earlier in
+    /// the same frame. A page drawn before the sidebar that switches it would
+    /// otherwise show the old page for one more frame. [`nav_list`](crate::prelude::nav_list)
+    /// does this for you.
     pub fn request_relayout(&mut self) {
-        self.relayout = true;
+        if self.hidden == 0 {
+            self.relayout = true;
+        }
+    }
+
+    /// Runs `f` without showing anything it draws. Layout, text shaping,
+    /// animations and widget state work as usual, but nothing is painted,
+    /// nothing reacts to the pointer, and nothing takes focus or appears to
+    /// screen readers. Use it to prepare a page before it is shown, so its
+    /// first frame is as fast as the ones after it.
+    ///
+    /// ```
+    /// # use rust_glass::prelude::*;
+    /// # fn settings(ui: &mut Ui) {}
+    /// # fn f(ctx: &mut Context, area: Rect) {
+    /// // Same region id as when the page is shown, so it shares the state.
+    /// ctx.hidden(|ctx| region(ctx, "settings", area, settings));
+    /// # }
+    /// ```
+    pub fn hidden<R>(&mut self, f: impl FnOnce(&mut Context) -> R) -> R {
+        let saved = self.enter_hidden();
+        let out = f(self);
+        self.leave_hidden(saved);
+        out
+    }
+    pub(crate) fn enter_hidden(&mut self) -> (bool, bool, Option<f64>) {
+        self.hidden += 1;
+        (self.repaint, self.relayout, self.repaint_at)
+    }
+    pub(crate) fn leave_hidden(&mut self, saved: (bool, bool, Option<f64>)) {
+        self.hidden -= 1;
+        // What is not shown asks for no frames.
+        (self.repaint, self.relayout, self.repaint_at) = saved;
+    }
+    /// Returns `true` inside [`Self::hidden`].
+    pub fn is_hidden(&self) -> bool {
+        self.hidden > 0
     }
     /// Returns `true` if the frame should run again before it is shown.
     pub fn wants_relayout(&self) -> bool {
@@ -531,33 +672,27 @@ impl Context {
     /// Returns a copy of the state stored for `id`, or the default if there is
     /// none.
     pub fn get<T: Clone + Default + 'static>(&mut self, id: Id) -> T {
-        let f = self.frame;
-        match self.states.get_mut(&(id, TypeId::of::<T>())) {
-            Some((b, used)) => {
-                *used = f;
-                b.downcast_ref::<T>().cloned().unwrap_or_default()
-            }
-            None => T::default(),
-        }
+        self.try_get(id).unwrap_or_default()
     }
     /// Returns a copy of the state stored for `id`, if there is any.
     pub fn try_get<T: Clone + 'static>(&mut self, id: Id) -> Option<T> {
-        let f = self.frame;
-        let (b, used) = self.states.get_mut(&(id, TypeId::of::<T>()))?;
-        *used = f;
+        let (f, now) = (self.frame, self.time);
+        let (b, used, at) = self.states.get_mut(&(id, TypeId::of::<T>()))?;
+        (*used, *at) = (f, now);
         b.downcast_ref::<T>().cloned()
     }
     /// Moves the state out, leaving nothing stored. Cheaper than [`Self::get`] for
     /// large state. Put it back with [`Self::set`].
     pub fn take<T: Default + 'static>(&mut self, id: Id) -> T {
         match self.states.remove(&(id, TypeId::of::<T>())) {
-            Some((b, _)) => b.downcast::<T>().map(|b| *b).unwrap_or_default(),
+            Some((b, ..)) => b.downcast::<T>().map(|b| *b).unwrap_or_default(),
             None => T::default(),
         }
     }
-    /// Stores state for `id`. State that is not used for a while is dropped.
+    /// Stores state for `id`. State that is not used for a while is dropped,
+    /// see [`Self::set_retention`].
     pub fn set<T: 'static>(&mut self, id: Id, value: T) {
-        self.states.insert((id, TypeId::of::<T>()), (Box::new(value), self.frame));
+        self.states.insert((id, TypeId::of::<T>()), (Box::new(value), self.frame, self.time));
     }
 
     /// Moves a value stored under `id` towards `target` on a spring and returns
@@ -597,6 +732,11 @@ impl Context {
     /// [`Order`], and within an order the one used or clicked last is on top.
     pub fn layer(&mut self, id: Id, order: Order) -> usize {
         let i = match self.layers.iter().position(|l| l.id == id) {
+            // Content that is not shown does not raise or keep its layer.
+            Some(i) if self.hidden > 0 => {
+                self.paint.ensure_layer(i);
+                return i;
+            }
             Some(i) => i,
             None => {
                 self.z_top += 1;
@@ -629,7 +769,15 @@ impl Context {
     /// Returns a painter for `layer` that clips to `clip`.
     pub fn painter(&mut self, layer: usize, clip: Rect) -> Painter<'_> {
         self.paint.ensure_layer(layer);
-        Painter { paint: &mut self.paint, text: &mut self.text, layer, clip, mask: 0, opacity: 1.0 }
+        Painter {
+            paint: &mut self.paint,
+            text: &mut self.text,
+            layer,
+            clip,
+            mask: 0,
+            opacity: 1.0,
+            hidden: self.hidden > 0,
+        }
     }
 
     /// Returns a painter for the whole window, behind all widgets.
@@ -646,6 +794,9 @@ impl Context {
     /// Parts outside `clip` do not react. Only the topmost widget under the
     /// pointer is hovered.
     pub fn interact(&mut self, id: Id, rect: Rect, clip: Rect, layer: usize, sense: Sense) -> Response {
+        if self.hidden > 0 {
+            return Response::idle(id, rect, None);
+        }
         if self.reveal.is_some_and(|(wanted, _)| wanted == id) {
             self.reveal_rect = Some(rect);
         }
@@ -658,9 +809,20 @@ impl Context {
         let focused = self.focus == Some(id);
         let key_click = (focused
             && self.focus_by_key
-            && sense == Sense::Click
+            && matches!(sense, Sense::Click | Sense::Press)
             && (self.input.key(Key::Enter) || self.input.key(Key::Space)))
             || (sense != Sense::Hover && self.access_requested(id, &Action::Click));
+        let pointer_click = match sense {
+            Sense::Hover => false,
+            Sense::Press => held && self.input.pressed,
+            Sense::Click | Sense::Drag => held && self.input.released && hovered,
+        };
+        // The app reacts to a click after this frame has laid out what it
+        // showed before, so the next frame has to follow without waiting for
+        // more input.
+        if (pointer_click || key_click || (held && self.input.released)) && self.hidden == 0 {
+            self.repaint = true;
+        }
         Response {
             id,
             rect,
@@ -668,7 +830,7 @@ impl Context {
             held: held && self.input.down,
             pressed: held && self.input.pressed,
             released: held && self.input.released,
-            clicked: (held && self.input.released && hovered && sense != Sense::Hover) || key_click,
+            clicked: pointer_click || key_click,
             double_clicked: held && self.input.pressed && self.input.double_clicked,
             secondary_clicked: hovered && self.input.secondary_clicked,
             focused,
@@ -681,6 +843,9 @@ impl Context {
     /// Lets `id` take keyboard focus with Tab. Call it every frame the widget is
     /// visible.
     pub fn focusable(&mut self, id: Id) {
+        if self.hidden > 0 {
+            return;
+        }
         self.focus_list.push(id);
         if self.access.on
             && let Some(n) = self.access.nodes.iter_mut().rev().find(|n| n.id == id)
@@ -718,7 +883,9 @@ impl Context {
     }
 
     /// Registers a scroll area and returns the wheel movement it receives, on
-    /// both axes.
+    /// both axes. `rect` is taken as given, without a clip. Inside a clipped
+    /// region use [`Ui::scroll_wheel`](crate::Ui::scroll_wheel), which cuts
+    /// it to the clip.
     pub fn scroll_area(&mut self, id: Id, rect: Rect, layer: usize) -> Vec2 {
         self.scroll_area_axes(id, rect, layer, true, true)
     }
@@ -728,6 +895,9 @@ impl Context {
     /// area around it, so a horizontal row inside a page leaves vertical scrolling
     /// to the page.
     pub fn scroll_area_axes(&mut self, id: Id, rect: Rect, layer: usize, x: bool, y: bool) -> Vec2 {
+        if self.hidden > 0 || !rect.is_positive() {
+            return Vec2::ZERO;
+        }
         let scroll = x as u8 | (y as u8) << 1;
         self.hits.push(Hit { id, rect, layer, sense: Sense::Hover, scroll });
         let s = self.input.scroll;
@@ -760,12 +930,14 @@ impl Context {
         let theme_adaptive = self.theme.adaptive;
         let f = self.frame;
         let dt = self.dt;
+        let now = self.time;
         let a = self.adapt.entry(id.0).or_insert_with(|| Adapt {
             mean: if dark_theme { 0.1 } else { 0.9 },
             is_dark: dark_theme,
             ..Default::default()
         });
         a.used = f;
+        a.used_time = now;
         if !adaptive || !theme_adaptive {
             a.is_dark = dark_theme;
         } else if a.known {
@@ -837,7 +1009,7 @@ impl Context {
     /// listening, so building labels costs nothing then.
     /// [`Ui::access`](crate::Ui::access) fills in the layer for you.
     pub fn access_node(&mut self, id: Id, role: Role, rect: Rect, layer: usize) -> Option<&mut Node> {
-        if !self.access.on {
+        if !self.access.on || self.hidden > 0 {
             return None;
         }
         let mut n = Node::new(id, role, rect);
@@ -1039,7 +1211,8 @@ impl Context {
     }
     /// Returns `true` while a payload of type `P` is dragged over `rect`.
     pub fn drag_over<P: 'static>(&self, rect: Rect) -> bool {
-        self.drag.as_ref().is_some_and(|d| d.payload.is::<P>())
+        self.hidden == 0
+            && self.drag.as_ref().is_some_and(|d| d.payload.is::<P>())
             && self.input.pointer.is_some_and(|p| rect.contains(p))
     }
     /// Returns the payload when it is released over `rect`. Only the first caller
@@ -1069,6 +1242,16 @@ impl Context {
     /// nothing.
     pub fn remove_image(&mut self, id: ImageId) {
         self.removed_images.push(id);
+    }
+
+    /// Hides the window. The app keeps running; [`Self::show_window`] brings
+    /// it back.
+    pub fn hide_window(&mut self) {
+        self.host_commands.push(HostCommand::Hide);
+    }
+    /// Shows the window and brings it to the front.
+    pub fn show_window(&mut self) {
+        self.host_commands.push(HostCommand::Show);
     }
 
     /// Puts `text` on the clipboard.

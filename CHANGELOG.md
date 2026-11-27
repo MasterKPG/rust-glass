@@ -4,6 +4,40 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+- Only the part of the window that changed is drawn again. Each frame is compared with the last on a grid of tiles, and glass keeps the backdrop it captured while nothing under it changed. A still page now costs about 0.4 ms of GPU time instead of 3.5 to 5 ms at 1770 x 1170, and the Feedback page with its spinner 1.5 ms instead of 3.8. `RUST_GLASS_FULL_REDRAW=1` turns it off. Partial frames match full redraws pixel for pixel in every page and gesture of the capture run.
+- `Context::request_repaint_after` asks for a frame later and lets the window sleep until then. `Context::waker` returns a `Waker` that wakes the window from another thread.
+- `Context::hidden` and `Ui::hidden` run UI code without showing it: text is shaped and state kept, but nothing is painted, reacts, takes focus or asks for frames. Use it to prepare a page before it is shown.
+- `Sense::Press` clicks when the button goes down. `nav_list` selects with it, like a sidebar on macOS, and runs the frame again so content drawn before the list shows the new page at once.
+- `FrameInfo::last` and `FrameInfo::peak` give the last frame unsmoothed and the slowest of the last two seconds. `FrameStats` has `gpu_ms_last` and `redrawn_px`.
+- `RUST_GLASS_TRACE=file` writes every frame with its timings and the time from input to the frame on screen.
+- `ScrollArea::content_width` centers a narrower column in a vertical area and keeps the bar at the edge. `ScrollArea::bar_inset` moves the bar.
+- `Ui::with_max_width` centers a column of at most a given width. `Ui::scroll_wheel` registers a scroll area cut to the clip.
+- `Context::set_retention` and `TextEngine::set_retention` set how long unused state and text stay cached.
+- `Material::liquidity` sets how liquid glass feels in motion: how far thumbs and the tab bar blob stretch and how long they wobble. The Material Lab has a slider for it.
+- Pressed glass lights up where the pointer touches it, spreading through the body and catching the rim nearby, as on iOS 27: `Glass::glow`, set by `PressEffect::apply` for buttons, toolbars, menus, steppers, checkboxes, color wells and the tab bar.
+- `Ui::drag_source_id` takes an id as it is, so an item keeps its state when it moves from one list to another.
+- `--motion DIR` in the showcase renders drops, presses and the album view frame by frame, and the `reference` tool takes `store` to replay a tab bar at the scale of the iOS 27 clips.
+- Window options: `Options::visible`, `Options::icon`, `Options::title_bar_follows_theme`, `Options::title_bar_colors`. `Context::hide_window` and `Context::show_window`. `App::close_requested` and `App::window_created`, and `winit` is re-exported.
+
+### Changed
+- The tab bar blob, refitted to iOS 27 footage in light and dark: larger, with a wide refracting edge that pulls the content around it into a rainbow, no outline, a stretch as it lands and no wobble after. It settles in under 0.4 s after a stop instead of about 1 s, and drops back into the selection faster after a tap.
+- The selection of the tab bar at rest is a flat shade of the bar as on iOS 27: a little darker on light glass and much darker on dark glass, where it used to be lighter.
+- The edge of glass reads as the surface curving away instead of a drawn line: the rim fades softly into the body, and a band along the edge turns slightly darker on light glass and lighter on dark glass.
+- A dropped item flies on from where it was let go with the speed it had, stays lifted until it is over its place, then sets down. Its place stays empty until it lands, so the item is never seen twice or in place early.
+- Widget state and the adaptive state of glass are dropped only after 1200 frames and five minutes without use, and shaped text after 240 frames and 30 seconds. Before, a window that drew all the time lost them within seconds, so a page you came back to paid its first frame again and lost its scroll position.
+- Glass far apart is captured in separate rectangles instead of one that covers both, which halves the copied area on some pages.
+- The glyph atlas grows to 4096 pixels before it is emptied, so a long animation of scaled text no longer re-rasterizes every visible glyph in one frame.
+- A focused text field, a toast at rest and scroll bars waiting to fade no longer draw every frame. They ask for the frame they need.
+- Text and icons wholly outside the clip are skipped before their glyphs are rasterized.
+- `Headless::settle` also waits for frames asked for with `request_repaint_after`.
+
+### Fixed
+- A click that changes what is shown without starting an animation is drawn at once. The window used to wait for the next input, so the album view of the showcase opened only when the pointer moved.
+- A card dropped in the other list of the showcase lands from where it was let go instead of appearing in place.
+- A scroll area shorter than its scroll bar no longer panics.
+- Widgets inside hidden content no longer join the Tab order.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

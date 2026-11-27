@@ -5,6 +5,12 @@
 //! chain, which the glass samples. Glass can therefore refract everything below
 //! it, including other glass. Commands that do not overlap are free to move to
 //! an earlier pass, so a window full of controls needs only a few.
+//!
+//! The scene texture keeps the last frame. Each frame is compared with the
+//! last one on a grid of tiles, and only the part that changed is drawn
+//! again, grown to cover every glass element that sees it. A frame where only
+//! a small meter moves redraws the meter. Set `RUST_GLASS_FULL_REDRAW=1` to
+//! draw every frame in full.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,7 +19,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use bytemuck::{Pod, Zeroable};
 
 use crate::paint::{Cmd, DrawData, GShapeInst, GlassInst, ImageId, MaskInst, ShapeInst};
-use crate::text::{ATLAS_SIZE, AtlasUpload, SPRITE_ATLAS_SIZE};
+use crate::text::{ATLAS_SIZE, SPRITE_ATLAS_SIZE, TextEngine};
 
 const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
 const MIPS: u32 = 6;
@@ -119,6 +125,268 @@ impl Px {
     fn empty(&self) -> bool {
         self.x1 <= self.x0 || self.y1 <= self.y0
     }
+    fn intersects(&self, o: &Px) -> bool {
+        !self.intersect(o).empty()
+    }
+    fn area(&self) -> f32 {
+        if self.empty() { 0.0 } else { (self.x1 - self.x0) * (self.y1 - self.y0) }
+    }
+    /// Grown outwards to multiples of `step`.
+    fn align(&self, step: f32) -> Px {
+        Px {
+            x0: (self.x0 / step).floor() * step,
+            y0: (self.y0 / step).floor() * step,
+            x1: (self.x1 / step).ceil() * step,
+            y1: (self.y1 / step).ceil() * step,
+        }
+    }
+}
+
+/// Adds `c` to a list of capture rectangles, merged with the ones it
+/// touches. Glass far apart gets separate captures, so two small controls in
+/// opposite corners do not copy the whole window between them.
+fn add_capture(list: &mut Vec<Px>, c: Px) {
+    let mut c = c;
+    while let Some(i) = list.iter().position(|o| o.grow(PAD as f32).intersects(&c)) {
+        c = c.union(&list.swap_remove(i));
+    }
+    list.push(c);
+}
+
+/// The mip level a glass element reads its blur from, and how far around its
+/// body it reads the backdrop.
+fn glass_reach(g: &GlassInst, b: &Px, probe: bool, ppp: f32) -> (u32, f32) {
+    let half = (b.x1 - b.x0).min(b.y1 - b.y0) * 0.5;
+    let mut r = g.blur;
+    if g.light_spill > 0.0 {
+        r = r.max(14.0 * ppp);
+    }
+    if g.shadow > 0.0 && g.shadow_tint > 0.0 {
+        r = r.max((half * 1.6).max(10.0 * ppp));
+    }
+    if g.dark_edge > 0.0 {
+        r = r.max((half * 0.85).max(6.0 * ppp));
+    }
+    let mut lod = (1.0 + r * 0.75).log2().ceil();
+    if probe {
+        lod = lod.max(((b.x1 - b.x0).max(b.y1 - b.y0) / 8.0).log2().ceil().min(4.0));
+    }
+    let lod = lod.clamp(0.0, (MIPS - 1) as f32) as u32;
+    // How far the lens moves a sample away from the pixel: the outward bend,
+    // the inner bend where its side flips, and the pinch, all spread by the
+    // rainbow of dispersion.
+    let bend = (g.outer_amount + g.inner_amount + 1.6 * g.pinch) * (1.0 + g.dispersion.abs());
+    // Four texels of the blur level: the blur chain reads a little past the
+    // edge of a capture, and glass must not see what lies beyond it.
+    let reach = 4.0 * (1u32 << lod) as f32 + g.inner_height * 0.8 + bend + 6.0 * ppp;
+    (lod, reach)
+}
+
+/// The body of a glass element: the union of its shapes.
+fn glass_body(data: &DrawData, g: &GlassInst) -> Px {
+    let mut body = Px::NONE;
+    for s in &data.gshapes[g.shape_start as usize..(g.shape_start + g.shape_count) as usize] {
+        body = body.union(&Px {
+            x0: s.center[0] - s.half[0],
+            y0: s.center[1] - s.half[1],
+            x1: s.center[0] + s.half[0],
+            y1: s.center[1] + s.half[1],
+        });
+    }
+    body
+}
+
+/// Where a shape can draw, before its clip.
+fn shape_extent(s: &ShapeInst) -> Px {
+    let e = s.soft * 2.5 + s.stroke + 1.0;
+    Px {
+        x0: s.rect[0].min(s.rect[2]) - e,
+        y0: s.rect[1].min(s.rect[3]) - e,
+        x1: s.rect[0].max(s.rect[2]) + e,
+        y1: s.rect[1].max(s.rect[3]) + e,
+    }
+}
+
+/// FNV-1a over 32 bit words.
+fn hash_bytes(h: u64, bytes: &[u8]) -> u64 {
+    let mut h = h;
+    for w in bytes.chunks(4) {
+        let mut v = [0u8; 4];
+        v[..w.len()].copy_from_slice(w);
+        h = (h ^ u32::from_le_bytes(v) as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+const DAMAGE_TILE: f32 = 32.0;
+
+/// Finds the part of the window that changed since the last frame, and the
+/// glass that has to read its backdrop again.
+///
+/// Every tile of the window keeps a hash of what is drawn on it, in the order
+/// of the passes. A glass element sees only the passes before its own, so
+/// its input is the hash of the tiles it reads at that point. Glass whose
+/// input and look are the same as in the last frame keeps the backdrop it
+/// captured then, even when it is drawn again because something next to it
+/// changed.
+#[derive(Default)]
+struct Damage {
+    w: usize,
+    h: usize,
+    tiles: Vec<u64>,
+    prev: Vec<u64>,
+    masks: Vec<u64>,
+    globals: u64,
+    /// The scene texture holds the whole last frame, and the backdrops of
+    /// the passes hold what their glass read.
+    valid: bool,
+    /// Per glass in plan order: its look, its input and its pass.
+    inputs: Vec<(u64, u64, u32)>,
+    prev_inputs: Vec<(u64, u64, u32)>,
+}
+
+/// The result of [`Damage::find`].
+struct Found {
+    /// The area to draw again, aligned to whole capture blocks.
+    area: Px,
+    /// For each glass in plan order: it reads its backdrop again.
+    dirty: Vec<bool>,
+}
+
+impl Damage {
+    /// Tiles under `r`: first and last column and row, the last ones excluded.
+    fn span(&self, r: &Px) -> (usize, usize, usize, usize) {
+        let f = |v: f32, n: usize| ((v / DAMAGE_TILE).max(0.0) as usize).min(n);
+        let c = |v: f32, n: usize| ((v / DAMAGE_TILE).ceil().max(0.0) as usize).min(n);
+        (f(r.x0, self.w), f(r.y0, self.h), c(r.x1, self.w), c(r.y1, self.h))
+    }
+
+    fn mark(&mut self, r: &Px, item: u64) {
+        let (x0, y0, x1, y1) = self.span(r);
+        for y in y0..y1 {
+            for t in &mut self.tiles[y * self.w + x0..y * self.w + x1] {
+                *t = (t.rotate_left(7) ^ item).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            }
+        }
+    }
+
+    /// Hash of the tiles under `r` as they are now.
+    fn read(&self, r: &Px) -> u64 {
+        let (x0, y0, x1, y1) = self.span(r);
+        let mut h = hash_bytes(0, bytemuck::bytes_of(&[x0 as u32, y0 as u32, x1 as u32, y1 as u32]));
+        for y in y0..y1 {
+            for t in &self.tiles[y * self.w + x0..y * self.w + x1] {
+                h = (h ^ t).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// Returns what to draw again, or `None` when nothing changed. The first
+    /// frame, and any after [`Self::valid`] was cleared, is drawn in full.
+    fn find(&mut self, data: &DrawData, plan: &Plan, screen: Px) -> Option<Found> {
+        let (w, h) = ((screen.x1 / DAMAGE_TILE).ceil() as usize, (screen.y1 / DAMAGE_TILE).ceil() as usize);
+        if (w, h) != (self.w, self.h) {
+            (self.w, self.h) = (w, h);
+            self.valid = false;
+        }
+        let mut gh = hash_bytes(0, bytemuck::cast_slice(&data.clear));
+        gh = hash_bytes(gh, bytemuck::cast_slice(&data.light));
+        gh = hash_bytes(gh, bytemuck::bytes_of(&data.ppp));
+        if gh != self.globals {
+            self.globals = gh;
+            self.valid = false;
+        }
+        self.tiles.clear();
+        self.tiles.resize(w * h, 0);
+        self.masks.clear();
+        for m in &data.masks {
+            let parent = if m.parent == 0 { 0 } else { self.masks[m.parent as usize - 1] };
+            self.masks.push(hash_bytes(parent ^ 0xcbf2_9ce4_8422_2325, bytemuck::bytes_of(m)));
+        }
+        let mask =
+            |masks: &[u64], i: u32| if i == 0 { 0 } else { masks.get(i as usize - 1).copied().unwrap_or(1) };
+        self.inputs.clear();
+        let mut dirty = Vec::new();
+        let mut looks = Vec::new();
+        // Glass that reads again may look different, which glass in later
+        // passes that reads over it must see.
+        let mut moved: Vec<Px> = Vec::new();
+        for (level, pass) in plan.passes.iter().enumerate() {
+            // What the glass of this pass reads: the passes before it.
+            looks.clear();
+            for u in &pass.glass {
+                let g = &data.glasses[u.index as usize];
+                let shapes = &data.gshapes[g.shape_start as usize..(g.shape_start + g.shape_count) as usize];
+                let look = hash_bytes(mask(&self.masks, g.mask), bytemuck::bytes_of(g));
+                let look = hash_bytes(look, bytemuck::cast_slice(shapes));
+                let key = (look, self.read(&u.reads), level as u32);
+                let i = self.inputs.len();
+                let again = !self.valid
+                    || self.prev_inputs.get(i) != Some(&key)
+                    || moved.iter().any(|m| m.intersects(&u.reads));
+                dirty.push(again);
+                self.inputs.push(key);
+                looks.push(look);
+            }
+            let first = dirty.len() - pass.glass.len();
+            for (k, u) in pass.glass.iter().enumerate() {
+                if dirty[first + k] {
+                    moved.push(u.drawn);
+                }
+            }
+            let mut k = 0;
+            for item in &pass.items {
+                match *item {
+                    Item::Shapes { start, end, image } => {
+                        for s in &plan.shapes[start as usize..end as usize] {
+                            let r = shape_extent(s).intersect(&Px::new(s.clip)).intersect(&screen);
+                            if !r.empty() {
+                                let item = hash_bytes(
+                                    mask(&self.masks, s.mask) ^ image.0 as u64,
+                                    bytemuck::bytes_of(s),
+                                );
+                                self.mark(&r, item);
+                            }
+                        }
+                    }
+                    Item::Glass(_) => {
+                        self.mark(&pass.glass[k].drawn, looks[k]);
+                        k += 1;
+                    }
+                }
+            }
+        }
+        std::mem::swap(&mut self.inputs, &mut self.prev_inputs);
+        std::mem::swap(&mut self.tiles, &mut self.prev);
+        if !self.valid {
+            self.valid = true;
+            return Some(Found { area: screen, dirty });
+        }
+        let mut area = Px::NONE;
+        for y in 0..h {
+            for x in 0..w {
+                if self.tiles[y * w + x] != self.prev[y * w + x] {
+                    let (fx, fy) = (x as f32 * DAMAGE_TILE, y as f32 * DAMAGE_TILE);
+                    area = area.union(&Px { x0: fx, y0: fy, x1: fx + DAMAGE_TILE, y1: fy + DAMAGE_TILE });
+                }
+            }
+        }
+        // Glass that reads again needs everything it reads drawn this frame.
+        let mut i = 0;
+        for pass in &plan.passes {
+            for u in &pass.glass {
+                if dirty[i] {
+                    area = area.union(&u.reads).union(&u.drawn);
+                }
+                i += 1;
+            }
+        }
+        if area.empty() {
+            return None;
+        }
+        Some(Found { area: area.align(PAD as f32).intersect(&screen), dirty })
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -127,12 +395,24 @@ enum Item {
     Glass(u32),
 }
 
+/// A glass element in a pass.
+#[derive(Clone, Copy, Debug)]
+struct GlassUse {
+    index: u32,
+    /// Index into the probe list of the frame, or `u32::MAX`.
+    probe: u32,
+    /// What it draws over, its shadow included.
+    drawn: Px,
+    /// What it reads from the backdrop.
+    reads: Px,
+    lod: u32,
+}
+
 #[derive(Default)]
 struct Pass {
     items: Vec<Item>,
-    capture: Option<Px>,
-    max_lod: u32,
-    probes: std::ops::Range<u32>,
+    /// The glass items of the pass, in the same order.
+    glass: Vec<GlassUse>,
 }
 
 /// A pass while it is being collected.
@@ -140,7 +420,6 @@ struct Pass {
 struct Work {
     pass: Pass,
     shapes: Vec<ShapeInst>,
-    probes: Vec<u32>,
 }
 
 #[derive(Default)]
@@ -148,8 +427,6 @@ struct Plan {
     passes: Vec<Pass>,
     /// Shapes reordered by pass.
     shapes: Vec<ShapeInst>,
-    /// Indices into the probe list, reordered by pass.
-    probes: Vec<u32>,
 }
 
 const TILE: f32 = 8.0;
@@ -217,6 +494,10 @@ pub struct FrameStats {
     /// GPU time in milliseconds, smoothed. `None` where the GPU cannot
     /// measure time, such as some virtual machines.
     pub gpu_ms: Option<f32>,
+    /// GPU time of the last measured frame, not smoothed.
+    pub gpu_ms_last: Option<f32>,
+    /// Pixels drawn again. Only the part of the window that changed is drawn.
+    pub redrawn_px: u64,
 }
 
 struct Readback {
@@ -239,10 +520,17 @@ struct Targets {
     tex: (u32, u32),
     scene: wgpu::Texture,
     scene_view: wgpu::TextureView,
+    present_group: wgpu::BindGroup,
+    /// The backdrop of each pass with glass, by pass.
+    levels: Vec<Option<Level>>,
+}
+
+/// What the glass of one pass reads: the scene up to that pass, blurred into
+/// a mip chain.
+struct Level {
     backdrop: wgpu::Texture,
     mip_views: Vec<wgpu::TextureView>,
     mip_groups: Vec<wgpu::BindGroup>,
-    present_group: wgpu::BindGroup,
     glass_group: wgpu::BindGroup,
     stats_group: wgpu::BindGroup,
 }
@@ -302,7 +590,9 @@ pub struct Renderer {
     shape_group: wgpu::BindGroup,
     glass_group: wgpu::BindGroup,
     atlas: wgpu::Texture,
+    atlas_size: u32,
     sprites: wgpu::Texture,
+    atlas_layout: wgpu::BindGroupLayout,
     atlas_group: wgpu::BindGroup,
     images: HashMap<u32, (wgpu::Texture, wgpu::BindGroup)>,
     next_image: u32,
@@ -313,6 +603,8 @@ pub struct Renderer {
     readbacks: Vec<Readback>,
     timing: Option<Timing>,
     grid: Grid,
+    damage: Damage,
+    full_redraw: bool,
     pub frame_stats: FrameStats,
 }
 
@@ -510,26 +802,15 @@ impl Renderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             })
         };
         let atlas = tex2d("glyphs", ATLAS_SIZE, wgpu::TextureFormat::R8Unorm);
         let sprites = tex2d("sprites", SPRITE_ATLAS_SIZE, wgpu::TextureFormat::Rgba8Unorm);
-        let atlas_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("atlas"),
-            layout: &atlas_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&atlas.create_view(&Default::default())),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&sprites.create_view(&Default::default())),
-                },
-            ],
-        });
+        let atlas_group = Self::atlas_group(&device, &atlas_layout, &atlas, &sprites);
 
         let shape_group = Self::group4(&device, &shape_layout, &globals, &masks, &sampler, &[&shapes]);
         let glass_group =
@@ -578,7 +859,9 @@ impl Renderer {
             shape_group,
             glass_group,
             atlas,
+            atlas_size: ATLAS_SIZE,
             sprites,
+            atlas_layout,
             atlas_group,
             images: HashMap::new(),
             next_image: 0,
@@ -589,10 +872,34 @@ impl Renderer {
             readbacks,
             timing,
             grid: Grid::default(),
+            damage: Damage::default(),
+            full_redraw: std::env::var_os("RUST_GLASS_FULL_REDRAW").is_some_and(|v| v != "0"),
             frame_stats: FrameStats::default(),
         };
         r.add_image(1, 1, &[255; 4]);
         r
+    }
+
+    fn atlas_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        atlas: &wgpu::Texture,
+        sprites: &wgpu::Texture,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("atlas"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&atlas.create_view(&Default::default())),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&sprites.create_view(&Default::default())),
+                },
+            ],
+        })
     }
 
     fn group4(
@@ -684,8 +991,15 @@ impl Renderer {
         );
     }
 
-    pub fn upload_atlas(&mut self, uploads: &mut Vec<AtlasUpload>) {
-        for u in uploads.drain(..) {
+    /// Uploads new glyphs, and follows the atlas when it grew or was emptied.
+    pub fn upload_atlas(&mut self, text: &mut TextEngine) {
+        if std::mem::take(&mut text.atlas_reset) {
+            self.damage.valid = false;
+        }
+        if text.atlas_size != self.atlas_size {
+            self.grow_atlas(text.atlas_size);
+        }
+        for u in text.uploads.drain(..) {
             let (t, bpp) = if u.color { (&self.sprites, 4) } else { (&self.atlas, 1) };
             let mut data = u.data;
             if u.color {
@@ -701,29 +1015,90 @@ impl Renderer {
         }
     }
 
+    /// Makes a larger glyph atlas that keeps the glyphs of the old one.
+    fn grow_atlas(&mut self, size: u32) {
+        let atlas = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("glyphs"),
+            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let old = self.atlas_size.min(size);
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_texture(
+            self.atlas.as_image_copy(),
+            atlas.as_image_copy(),
+            wgpu::Extent3d { width: old, height: old, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([enc.finish()]);
+        self.atlas_group = Self::atlas_group(&self.device, &self.atlas_layout, &atlas, &self.sprites);
+        self.atlas = atlas;
+        self.atlas_size = size;
+        log::debug!("glyph atlas grown to {size} x {size}");
+    }
+
     fn ensure_targets(&mut self, w: u32, h: u32) {
         if self.targets.as_ref().is_some_and(|t| t.size == (w, h)) {
             return;
         }
-        let d = &self.device;
         let tex = (w.next_multiple_of(PAD), h.next_multiple_of(PAD));
-        let extent = wgpu::Extent3d { width: tex.0, height: tex.1, depth_or_array_layers: 1 };
-        use wgpu::TextureUsages as T;
-        let make = |label, mips, usage| {
-            d.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: extent,
-                mip_level_count: mips,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: SCENE_FORMAT,
-                usage,
-                view_formats: &[],
-            })
-        };
-        let scene = make("scene", 1, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING | T::COPY_SRC);
-        let backdrop = make("backdrop", MIPS, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING | T::COPY_DST);
+        let scene = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("scene"),
+            size: wgpu::Extent3d { width: tex.0, height: tex.1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SCENE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
         let scene_view = scene.create_view(&Default::default());
+        let present_group = self.blur_group(&scene_view);
+        // New textures hold nothing yet.
+        self.damage.valid = false;
+        self.targets =
+            Some(Targets { size: (w, h), tex, scene, scene_view, present_group, levels: Vec::new() });
+    }
+
+    fn blur_group(&self, view: &wgpu::TextureView) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.blur_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            ],
+        })
+    }
+
+    /// Makes the backdrop of pass `pass`. Each pass with glass keeps its own,
+    /// so glass that reads nothing new keeps what it captured before.
+    fn ensure_level(&mut self, pass: usize) {
+        let t = self.targets.as_ref().expect("targets exist");
+        if t.levels.get(pass).is_some_and(Option::is_some) {
+            return;
+        }
+        let d = &self.device;
+        let backdrop = d.create_texture(&wgpu::TextureDescriptor {
+            label: Some("backdrop"),
+            size: wgpu::Extent3d { width: t.tex.0, height: t.tex.1, depth_or_array_layers: 1 },
+            mip_level_count: MIPS,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SCENE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
         let full = backdrop.create_view(&Default::default());
         let mip_views: Vec<_> = (0..MIPS)
             .map(|i| {
@@ -734,21 +1109,7 @@ impl Renderer {
                 })
             })
             .collect();
-        let blur_group = |v: &wgpu::TextureView| {
-            d.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.blur_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(v) },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                ],
-            })
-        };
-        let mip_groups = mip_views.iter().map(blur_group).collect();
-        let present_group = blur_group(&scene_view);
+        let mip_groups = mip_views.iter().map(|v| self.blur_group(v)).collect();
         let glass_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("backdrop"),
             layout: &self.backdrop_layout,
@@ -775,18 +1136,14 @@ impl Renderer {
                 },
             ],
         });
-        self.targets = Some(Targets {
-            size: (w, h),
-            tex,
-            scene,
-            scene_view,
-            backdrop,
-            mip_views,
-            mip_groups,
-            present_group,
-            glass_group,
-            stats_group,
-        });
+        let level = Level { backdrop, mip_views, mip_groups, glass_group, stats_group };
+        let t = self.targets.as_mut().expect("targets exist");
+        while t.levels.len() <= pass {
+            t.levels.push(None);
+        }
+        t.levels[pass] = Some(level);
+        // The new backdrop holds nothing: its glass must capture.
+        self.damage.valid = false;
     }
 
     /// Split the command list into passes, see the module docs.
@@ -808,15 +1165,7 @@ impl Renderer {
             match *cmd {
                 Cmd::Shapes { start, end, image } => {
                     for s in &data.shapes[start as usize..end as usize] {
-                        let e = s.soft * 2.5 + s.stroke + 1.0;
-                        let r = Px {
-                            x0: s.rect[0].min(s.rect[2]) - e,
-                            y0: s.rect[1].min(s.rect[3]) - e,
-                            x1: s.rect[0].max(s.rect[2]) + e,
-                            y1: s.rect[1].max(s.rect[3]) + e,
-                        }
-                        .intersect(&Px::new(s.clip))
-                        .intersect(&screen);
+                        let r = shape_extent(s).intersect(&Px::new(s.clip)).intersect(&screen);
                         if r.empty() {
                             continue;
                         }
@@ -835,22 +1184,15 @@ impl Renderer {
                 }
                 Cmd::Glass { index, probe } => {
                     let g = &data.glasses[index as usize];
-                    let mut body = Px::NONE;
-                    for s in &data.gshapes[g.shape_start as usize..(g.shape_start + g.shape_count) as usize] {
-                        body = body.union(&Px {
-                            x0: s.center[0] - s.half[0],
-                            y0: s.center[1] - s.half[1],
-                            x1: s.center[0] + s.half[0],
-                            y1: s.center[1] + s.half[1],
-                        });
-                    }
+                    let body = glass_body(data, g);
                     let clip = Px::new(g.clip).intersect(&screen);
                     let b = body.grow(1.0).intersect(&clip);
-                    if b.empty() {
+                    let drawn = Px::new(g.bounds).intersect(&clip);
+                    if b.empty() || drawn.empty() {
                         continue;
                     }
-                    let (drawn, shade) = grid.query(&b);
-                    let level = drawn.max(shade).max(1).min(MAX_PASSES as u8 - 1);
+                    let (drawn_level, shade) = grid.query(&b);
+                    let level = drawn_level.max(shade).max(1).min(MAX_PASSES as u8 - 1);
                     // Later shapes stay on top of the visible part of the shadow.
                     let mut sh = body.grow(g.shadow_radius * 0.55);
                     sh.y1 += g.shadow_y;
@@ -859,28 +1201,9 @@ impl Renderer {
                     grow(level as usize, &mut work);
                     let w = &mut work[level as usize];
                     w.pass.items.push(Item::Glass(index));
-                    let half = (b.x1 - b.x0).min(b.y1 - b.y0) * 0.5;
-                    let mut r = g.blur;
-                    if g.light_spill > 0.0 {
-                        r = r.max(14.0 * data.ppp);
-                    }
-                    if g.shadow > 0.0 && g.shadow_tint > 0.0 {
-                        r = r.max((half * 1.6).max(10.0 * data.ppp));
-                    }
-                    if g.dark_edge > 0.0 {
-                        r = r.max((half * 0.85).max(6.0 * data.ppp));
-                    }
-                    let mut lod = (1.0 + r * 0.75).log2().ceil();
-                    if probe != u32::MAX {
-                        w.probes.push(probe);
-                        lod = lod.max(((b.x1 - b.x0).max(b.y1 - b.y0) / 8.0).log2().ceil().min(4.0));
-                    }
-                    let lod = lod.clamp(0.0, (MIPS - 1) as f32) as u32;
-                    w.pass.max_lod = w.pass.max_lod.max(lod);
-                    let reach =
-                        3.0 * (1u32 << lod) as f32 + g.inner_height * 0.8 + g.outer_amount + 6.0 * data.ppp;
-                    let c = w.pass.capture.unwrap_or(Px::NONE);
-                    w.pass.capture = Some(c.union(&b.grow(reach)));
+                    let (lod, reach) = glass_reach(g, &b, probe != u32::MAX, data.ppp);
+                    let reads = b.grow(reach).intersect(&screen);
+                    w.pass.glass.push(GlassUse { index, probe, drawn, reads, lod });
                 }
             }
         }
@@ -893,9 +1216,6 @@ impl Renderer {
                     *end += base;
                 }
             }
-            let first = plan.probes.len() as u32;
-            plan.probes.append(&mut w.probes);
-            w.pass.probes = first..plan.probes.len() as u32;
             plan.passes.push(w.pass);
         }
         plan
@@ -927,6 +1247,7 @@ impl Renderer {
                 let ms = v[1].saturating_sub(v[0]) as f32 * t.period / 1e6;
                 let s = &mut self.frame_stats.gpu_ms;
                 *s = Some(s.map_or(ms, |old| old * 0.9 + ms * 0.1));
+                self.frame_stats.gpu_ms_last = Some(ms);
             }
             t.read.unmap();
             t.state.store(0, Ordering::Release);
@@ -945,8 +1266,75 @@ impl Renderer {
         let tex = self.targets.as_ref().unwrap().tex;
         let screen = Px { x0: 0.0, y0: 0.0, x1: tex.0 as f32, y1: tex.1 as f32 };
         let mut grid = std::mem::take(&mut self.grid);
-        let plan = Self::plan(data, screen, &mut grid);
+        let mut plan = Self::plan(data, screen, &mut grid);
         self.grid = grid;
+        // Backdrops for the passes with glass. A new one makes the frame full.
+        let with_glass: Vec<usize> =
+            plan.passes.iter().enumerate().filter(|(_, p)| !p.glass.is_empty()).map(|(i, _)| i).collect();
+        for pi in with_glass {
+            self.ensure_level(pi);
+        }
+        if self.full_redraw {
+            self.damage.valid = false;
+        }
+        let found = self.damage.find(data, &plan, screen);
+        let (area, dirty) = match found {
+            Some(f) => (f.area, f.dirty),
+            None => (Px { x0: 0.0, y0: 0.0, x1: 0.0, y1: 0.0 }, Vec::new()),
+        };
+        let nothing = area.empty();
+        let whole =
+            !nothing && area.x0 <= 0.0 && area.y0 <= 0.0 && area.x1 >= screen.x1 && area.y1 >= screen.y1;
+        // A part of the window is cleared by a rectangle in the clear color,
+        // drawn first in the first pass.
+        let clear = (!whole && !nothing).then(|| {
+            let c = data.clear;
+            let r = area.grow(4.0);
+            plan.shapes.push(ShapeInst {
+                rect: [r.x0, r.y0, r.x1, r.y1],
+                uv: [0.0; 4],
+                color: [c[0], c[1], c[2], 1.0],
+                color2: [c[0], c[1], c[2], 1.0],
+                radius: [0.0; 2],
+                stroke: 0.0,
+                soft: 0.0,
+                clip: [r.x0, r.y0, r.x1, r.y1],
+                kind: 0,
+                mask: 0,
+                power: 2.0,
+                pad: 0.0,
+            });
+            plan.shapes.len() as u32 - 1
+        });
+
+        // What each pass captures: the reads of its glass that reads again,
+        // with the measurements of that glass.
+        let mut captures: Vec<Vec<Px>> = Vec::with_capacity(plan.passes.len());
+        let mut lods = Vec::with_capacity(plan.passes.len());
+        let mut probe_list: Vec<u32> = Vec::new();
+        let mut probe_ranges = Vec::with_capacity(plan.passes.len());
+        let mut gi = 0;
+        for p in &plan.passes {
+            let mut caps = Vec::new();
+            let mut lod = 0;
+            let first = probe_list.len() as u32;
+            for u in &p.glass {
+                let again = dirty.get(gi).copied().unwrap_or(false);
+                gi += 1;
+                if !again || nothing {
+                    continue;
+                }
+                add_capture(&mut caps, u.reads.intersect(&area));
+                lod = lod.max(u.lod);
+                if u.probe != u32::MAX && probe_list.len() < MAX_PROBES as usize {
+                    probe_list.push(u.probe);
+                }
+            }
+            captures.push(caps);
+            lods.push(lod);
+            probe_ranges.push(first..probe_list.len() as u32);
+        }
+
         let masks_new = self.masks.write(&dev, &q, &data.masks);
         if self.shapes.write(&dev, &q, &plan.shapes) | masks_new {
             self.shape_group = Self::group4(
@@ -985,58 +1373,76 @@ impl Renderer {
                 ppp: data.ppp,
             }),
         );
-        let n_probes = plan.probes.len().min(MAX_PROBES as usize);
+        let n_probes = probe_list.len();
         if n_probes > 0 {
-            let rects: Vec<[f32; 4]> =
-                plan.probes[..n_probes].iter().map(|p| data.probes[*p as usize].1).collect();
+            let rects: Vec<[f32; 4]> = probe_list.iter().map(|p| data.probes[*p as usize].1).collect();
             q.write_buffer(&self.probes, 0, bytemuck::cast_slice(&rects));
         }
 
-        let passes = &plan.passes;
+        let passes = if nothing { &[][..] } else { &plan.passes[..] };
         let mut infos = vec![0u8; passes.len().min(MAX_PASSES as usize) * INFO_STRIDE as usize];
-        for (i, p) in passes.iter().take(MAX_PASSES as usize).enumerate() {
-            let info = StatInfo { tex_size, size, first: p.probes.start, pad: [0; 3] };
+        for (i, r) in probe_ranges.iter().take(passes.len().min(MAX_PASSES as usize)).enumerate() {
+            let info = StatInfo { tex_size, size, first: r.start, pad: [0; 3] };
             let at = i * INFO_STRIDE as usize;
             infos[at..at + std::mem::size_of::<StatInfo>()].copy_from_slice(bytemuck::bytes_of(&info));
         }
-        q.write_buffer(&self.infos, 0, &infos);
+        if !infos.is_empty() {
+            q.write_buffer(&self.infos, 0, &infos);
+        }
 
         let mut enc = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         let time_this = self.timing.as_ref().filter(|t| t.state.load(Ordering::Acquire) == 0);
         let mut fs = FrameStats {
             passes: passes.len() as u32,
-            shapes: plan.shapes.len() as u32,
+            shapes: if nothing { 0 } else { plan.shapes.len() as u32 },
             glasses: data.glasses.len() as u32,
             gpu_ms: self.frame_stats.gpu_ms,
+            gpu_ms_last: self.frame_stats.gpu_ms_last,
             captured_px: 0,
+            redrawn_px: if nothing { 0 } else { area.area() as u64 },
+        };
+        // Everything is drawn inside the changed area only.
+        let scissor = {
+            let x0 = (area.x0.max(0.0) as u32).min(t.tex.0);
+            let y0 = (area.y0.max(0.0) as u32).min(t.tex.1);
+            let x1 = (area.x1.max(0.0).ceil() as u32).min(t.tex.0);
+            let y1 = (area.y1.max(0.0).ceil() as u32).min(t.tex.1);
+            (x0, y0, x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1))
         };
 
         for (pi, p) in passes.iter().enumerate() {
-            if let Some(c) = p.capture {
-                let align = |v: f32| (v.max(0.0) as u32) / PAD * PAD;
-                let x0 = align(c.x0).min(t.tex.0);
-                let y0 = align(c.y0).min(t.tex.1);
-                let x1 = (c.x1.max(0.0).ceil() as u32).next_multiple_of(PAD).min(t.tex.0);
-                let y1 = (c.y1.max(0.0).ceil() as u32).next_multiple_of(PAD).min(t.tex.1);
-                if x1 > x0 && y1 > y0 {
-                    fs.captured_px += (x1 - x0) as u64 * (y1 - y0) as u64;
-                    let origin = wgpu::Origin3d { x: x0, y: y0, z: 0 };
-                    let info = |texture| wgpu::TexelCopyTextureInfo {
-                        texture,
-                        mip_level: 0,
-                        origin,
-                        aspect: wgpu::TextureAspect::All,
-                    };
-                    enc.copy_texture_to_texture(
-                        info(&t.scene),
-                        info(&t.backdrop),
-                        wgpu::Extent3d { width: x1 - x0, height: y1 - y0, depth_or_array_layers: 1 },
-                    );
-                    for lod in 1..=p.max_lod {
+            let level = t.levels.get(pi).and_then(Option::as_ref);
+            let mut copied = Vec::with_capacity(captures[pi].len());
+            if let Some(lv) = level {
+                for c in &captures[pi] {
+                    let align = |v: f32| (v.max(0.0) as u32) / PAD * PAD;
+                    let x0 = align(c.x0).min(t.tex.0);
+                    let y0 = align(c.y0).min(t.tex.1);
+                    let x1 = (c.x1.max(0.0).ceil() as u32).next_multiple_of(PAD).min(t.tex.0);
+                    let y1 = (c.y1.max(0.0).ceil() as u32).next_multiple_of(PAD).min(t.tex.1);
+                    if x1 > x0 && y1 > y0 {
+                        fs.captured_px += (x1 - x0) as u64 * (y1 - y0) as u64;
+                        let origin = wgpu::Origin3d { x: x0, y: y0, z: 0 };
+                        let info = |texture| wgpu::TexelCopyTextureInfo {
+                            texture,
+                            mip_level: 0,
+                            origin,
+                            aspect: wgpu::TextureAspect::All,
+                        };
+                        enc.copy_texture_to_texture(
+                            info(&t.scene),
+                            info(&lv.backdrop),
+                            wgpu::Extent3d { width: x1 - x0, height: y1 - y0, depth_or_array_layers: 1 },
+                        );
+                        copied.push((x0, y0, x1, y1));
+                    }
+                }
+                if !copied.is_empty() {
+                    for lod in 1..=lods[pi] {
                         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("blur"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &t.mip_views[lod as usize],
+                                view: &lv.mip_views[lod as usize],
                                 depth_slice: None,
                                 resolve_target: None,
                                 ops: wgpu::Operations {
@@ -1046,26 +1452,28 @@ impl Renderer {
                             })],
                             ..Default::default()
                         });
-                        rp.set_scissor_rect(
-                            x0 >> lod,
-                            y0 >> lod,
-                            ((x1 - x0) >> lod).max(1),
-                            ((y1 - y0) >> lod).max(1),
-                        );
                         rp.set_pipeline(&self.blur_pipe);
-                        rp.set_bind_group(0, &t.mip_groups[lod as usize - 1], &[]);
-                        rp.draw(0..3, 0..1);
+                        rp.set_bind_group(0, &lv.mip_groups[lod as usize - 1], &[]);
+                        for &(x0, y0, x1, y1) in &copied {
+                            rp.set_scissor_rect(
+                                x0 >> lod,
+                                y0 >> lod,
+                                ((x1 - x0) >> lod).max(1),
+                                ((y1 - y0) >> lod).max(1),
+                            );
+                            rp.draw(0..3, 0..1);
+                        }
                     }
-                    let probes = p.probes.start..p.probes.end.min(n_probes as u32);
+                    let probes = probe_ranges[pi].clone();
                     if !probes.is_empty() && pi < MAX_PASSES as usize {
                         let mut cp = enc.begin_compute_pass(&Default::default());
                         cp.set_pipeline(&self.stats_pipe);
-                        cp.set_bind_group(0, &t.stats_group, &[(pi as u64 * INFO_STRIDE) as u32]);
+                        cp.set_bind_group(0, &lv.stats_group, &[(pi as u64 * INFO_STRIDE) as u32]);
                         cp.dispatch_workgroups(probes.len() as u32, 1, 1);
                     }
                 }
             }
-            let load = if pi == 0 {
+            let load = if pi == 0 && whole {
                 let c = data.clear;
                 wgpu::LoadOp::Clear(wgpu::Color { r: c[0] as f64, g: c[1] as f64, b: c[2] as f64, a: 1.0 })
             } else {
@@ -1089,7 +1497,18 @@ impl Renderer {
                 },
                 ..Default::default()
             });
+            rp.set_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
             let mut mode = 0;
+            if let (0, Some(c)) = (pi, clear)
+                && let Some((_, g)) = self.images.get(&0)
+            {
+                mode = 1;
+                rp.set_pipeline(&self.shape_pipe);
+                rp.set_bind_group(0, &self.shape_group, &[]);
+                rp.set_bind_group(1, &self.atlas_group, &[]);
+                rp.set_bind_group(2, g, &[]);
+                rp.draw(0..4, c..c + 1);
+            }
             for item in &p.items {
                 match *item {
                     Item::Shapes { start, end, image } => {
@@ -1107,7 +1526,8 @@ impl Renderer {
                     }
                     Item::Glass(index) => {
                         let g = &data.glasses[index as usize];
-                        let vis = Px::new(g.bounds).intersect(&Px::new(g.clip)).intersect(&screen);
+                        let vis = Px::new(g.bounds).intersect(&Px::new(g.clip)).intersect(&area);
+                        let Some(lv) = level else { continue };
                         if vis.empty() {
                             continue;
                         }
@@ -1115,7 +1535,7 @@ impl Renderer {
                             mode = 2;
                             rp.set_pipeline(&self.glass_pipe);
                             rp.set_bind_group(0, &self.glass_group, &[]);
-                            rp.set_bind_group(1, &t.glass_group, &[]);
+                            rp.set_bind_group(1, &lv.glass_group, &[]);
                         }
                         rp.draw(0..4, index..index + 1);
                     }
@@ -1137,7 +1557,8 @@ impl Renderer {
                 })],
                 timestamp_writes: time_this.map(|tm| wgpu::RenderPassTimestampWrites {
                     query_set: &tm.set,
-                    beginning_of_pass_write_index: None,
+                    // Without scene passes the frame starts here.
+                    beginning_of_pass_write_index: passes.is_empty().then_some(0),
                     end_of_pass_write_index: Some(1),
                 }),
                 ..Default::default()
@@ -1169,7 +1590,7 @@ impl Renderer {
         };
         if let Some(i) = slot {
             let r = &mut self.readbacks[i];
-            r.keys = plan.probes[..n_probes].iter().map(|p| data.probes[*p as usize].0).collect();
+            r.keys = probe_list.iter().map(|p| data.probes[*p as usize].0).collect();
             arm(&r.buffer, &r.state);
         }
         if timed && let Some(tm) = &self.timing {
@@ -1208,6 +1629,7 @@ mod tests {
         let mut s: GShapeInst = Zeroable::zeroed();
         s.center = [x, 50.0];
         s.half = [20.0, 20.0];
+        g.bounds = [x - 20.0, 30.0, x + 20.0, 70.0];
         data.gshapes.push(s);
         let p = if probe {
             data.probes.push((1, [0.0; 4]));
@@ -1223,6 +1645,10 @@ mod tests {
 
     fn plan(d: &DrawData) -> Plan {
         Renderer::plan(d, SCREEN, &mut Grid::default())
+    }
+
+    fn probes(p: &Pass) -> Vec<u32> {
+        p.glass.iter().filter(|u| u.probe != u32::MAX).map(|u| u.probe).collect()
     }
 
     fn shape_at(data: &mut DrawData, x: f32, w: f32) {
@@ -1248,7 +1674,7 @@ mod tests {
         glass_at(&mut d, 150.0, true);
         let p = plan(&d);
         assert_eq!(p.passes.len(), 2);
-        assert_eq!(p.passes[1].probes, 0..2);
+        assert_eq!(probes(&p.passes[1]), [0, 1]);
     }
 
     #[test]
@@ -1258,8 +1684,8 @@ mod tests {
         glass_at(&mut d, 55.0, true);
         let p = plan(&d);
         assert_eq!(p.passes.len(), 3);
-        assert_eq!(p.passes[2].probes, 1..2);
-        assert_eq!(p.probes, [0, 1]);
+        assert_eq!(probes(&p.passes[1]), [0]);
+        assert_eq!(probes(&p.passes[2]), [1]);
     }
 
     #[test]
@@ -1269,7 +1695,7 @@ mod tests {
         glass_at(&mut d, 50.0, true);
         let p = plan(&d);
         assert_eq!(p.passes.len(), 2);
-        assert_eq!(p.probes, [1]);
+        assert_eq!(probes(&p.passes[1]), [1]);
     }
 
     #[test]
@@ -1290,6 +1716,68 @@ mod tests {
         shape_at(&mut d, 45.0, 10.0);
         let p = plan(&d);
         assert!(matches!(p.passes[1].items[..], [Item::Glass(0), Item::Shapes { .. }]));
+    }
+
+    #[test]
+    fn far_apart_glass_gets_separate_captures() {
+        let mut d = DrawData { ppp: 1.0, ..Default::default() };
+        glass_at(&mut d, 50.0, true);
+        glass_at(&mut d, 350.0, true);
+        let p = plan(&d);
+        let mut caps = Vec::new();
+        for u in &p.passes[1].glass {
+            add_capture(&mut caps, u.reads);
+        }
+        assert_eq!(caps.len(), 2);
+    }
+
+    #[test]
+    fn damage_covers_what_changed_and_the_glass_that_sees_it() {
+        let screen = Px { x0: 0.0, y0: 0.0, x1: 1024.0, y1: 512.0 };
+        let frame = |x: f32| {
+            let mut d = DrawData { ppp: 1.0, ..Default::default() };
+            shape_at(&mut d, x, 10.0);
+            glass_at(&mut d, 600.0, true);
+            d
+        };
+        let mut damage = Damage::default();
+        let mut find =
+            |d: &DrawData| damage.find(d, &Renderer::plan(d, screen, &mut Grid::default()), screen);
+        // The first frame is drawn in full.
+        let first = find(&frame(100.0)).unwrap();
+        assert_eq!(first.area.area(), screen.area());
+        assert_eq!(first.dirty, [true]);
+        // Nothing changed.
+        assert!(find(&frame(100.0)).is_none());
+        // The shape moved, far from the glass: only its tiles, and the glass
+        // keeps its backdrop.
+        let far = find(&frame(110.0)).unwrap();
+        assert!(far.area.x0 <= 100.0 && far.area.x1 >= 121.0 && far.area.x1 < 400.0, "{:?}", far.area);
+        assert_eq!(far.dirty, [false]);
+        // It moved under what the glass reads: the glass reads again, and all
+        // it reads is drawn again.
+        let near = find(&frame(570.0)).unwrap();
+        assert_eq!(near.dirty, [true]);
+        assert!(near.area.x0 <= 570.0 && near.area.x1 >= 620.0, "{:?}", near.area);
+    }
+
+    #[test]
+    fn a_label_on_glass_does_not_make_it_read_again() {
+        let screen = Px { x0: 0.0, y0: 0.0, x1: 1024.0, y1: 512.0 };
+        // Glass with a label drawn over it, in a later pass.
+        let frame = |shade: f32| {
+            let mut d = DrawData { ppp: 1.0, ..Default::default() };
+            glass_at(&mut d, 600.0, true);
+            shape_at(&mut d, 595.0, 10.0);
+            d.shapes.last_mut().unwrap().color = [shade, 0.0, 0.0, 1.0];
+            d
+        };
+        let mut damage = Damage::default();
+        let mut find =
+            |d: &DrawData| damage.find(d, &Renderer::plan(d, screen, &mut Grid::default()), screen);
+        find(&frame(0.0));
+        let changed = find(&frame(1.0)).unwrap();
+        assert_eq!(changed.dirty, [false]);
     }
 
     #[test]

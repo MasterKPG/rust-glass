@@ -89,6 +89,9 @@ pub(crate) struct GlassInst {
     pub shadow_radius: f32,
     pub shadow_y: f32,
     pub shadow_tint: f32,
+    pub glow_pos: [f32; 2],
+    pub glow: f32,
+    pub glow_radius: f32,
 }
 
 const RRECT: u32 = 0;
@@ -237,6 +240,8 @@ pub struct Painter<'a> {
     pub mask: u32,
     /// Opacity of everything painted, from 0 to 1.
     pub opacity: f32,
+    /// Inside [`Context::hidden`](crate::Context::hidden): nothing is painted.
+    pub(crate) hidden: bool,
 }
 
 /// How far the edges of a mask fade out, in points. 0 is a hard edge.
@@ -276,7 +281,7 @@ impl Painter<'_> {
     }
 
     fn push(&mut self, s: ShapeInst, image: ImageId) {
-        if s.color[3] <= 0.0 && s.color2[3] <= 0.0 {
+        if self.hidden || (s.color[3] <= 0.0 && s.color2[3] <= 0.0) {
             return;
         }
         let e = if s.kind == RRECT { s.soft * 2.5 } else { 0.0 } + s.stroke;
@@ -424,7 +429,7 @@ impl Painter<'_> {
         origin: Vec2,
     ) {
         let (pos, l, c, about) = (position, layout, color, origin);
-        if c.a * self.opacity <= 0.002 {
+        if self.hidden || c.a * self.opacity <= 0.002 {
             return;
         }
         let ppp = self.paint.ppp;
@@ -433,7 +438,21 @@ impl Painter<'_> {
         let px = if moving { (want * 2.0).round().max(2.0) * 0.5 } else { l.font_size * ppp };
         let residual = if moving { want / px } else { 1.0 };
         let about_px = about * ppp;
+        // Text wholly outside the clip is not rasterized at all, and glyphs
+        // outside it are skipped before they reach the atlas.
+        let clip = self.clip;
+        let margin = l.font_size * scale.max(1.0) * 1.5;
+        let corners = [pos, pos + l.size].map(|p| about + (p - about) * scale);
+        let bounds = Rect { min: corners[0].min(corners[1]), max: corners[0].max(corners[1]) };
+        if !bounds.expand(margin).intersects(&clip) {
+            return;
+        }
+        let near = clip.expand(margin);
         for g in &l.glyphs {
+            let at_pt = about + (pos + g.pos - about) * scale;
+            if !near.contains(at_pt) {
+                continue;
+            }
             // Baselines sit on whole pixels at rest. While scaled, the glyph
             // moves away from that same snapped place, so the text lands
             // exactly where it rests and never hops by a fraction of a pixel
@@ -460,6 +479,9 @@ impl Painter<'_> {
 
     /// Draws an icon `size` points wide, centered on `center`.
     pub fn icon(&mut self, center: Vec2, size: f32, icon: Icon, color: Color) {
+        if self.hidden || !Rect::from_center_size(center, Vec2::splat(size)).intersects(&self.clip) {
+            return;
+        }
         let c = color;
         let want = size * self.paint.ppp;
         // Even pixel sizes; small residual scale while animating.
@@ -502,7 +524,7 @@ impl Painter<'_> {
     /// Paints a glass element. It bends and blurs everything painted before
     /// it, on this layer and below.
     pub fn glass(&mut self, g: &Glass) {
-        if g.presence <= 0.001 || g.shapes.is_empty() || self.opacity <= 0.001 {
+        if self.hidden || g.presence <= 0.001 || g.shapes.is_empty() || self.opacity <= 0.001 {
             return;
         }
         let s = self.paint.ppp;
@@ -561,10 +583,14 @@ impl Painter<'_> {
         // Stronger edges, except on glass that has no edge at all.
         let hc = if self.paint.increase_contrast && m.rim > 0.0 { 0.5 } else { 0.0 };
         let c = bounds.center();
+        // The light of a press covers small controls and stays a spot on
+        // large ones.
+        let (glow_at, glow) = g.glow.unwrap_or((c, 0.0));
+        let glow_radius = (bounds.width().max(bounds.height()) * 0.5).clamp(22.0, 70.0);
         let inst = GlassInst {
             bounds: self.px(bounds.expand(grow + g.fuse * 0.3)),
             clip: self.px(self.clip),
-            tint: [m.sideways, m.corner_dispersion, 0.0, m.tint_follow],
+            tint: [m.sideways, m.corner_dispersion, d, m.tint_follow],
             shape_start: start,
             shape_count: g.shapes.len() as u32,
             mask: self.mask,
@@ -596,6 +622,9 @@ impl Painter<'_> {
             shadow_radius: m.shadow_radius * s,
             shadow_y: m.shadow_y * s,
             shadow_tint: m.shadow_tint,
+            glow_pos: [glow_at.x * s, glow_at.y * s],
+            glow: glow * presence,
+            glow_radius: glow_radius * s,
         };
         let l = &mut self.paint.layers[self.layer];
         l.order.push((true, l.glasses.len() as u32, ImageId(0)));

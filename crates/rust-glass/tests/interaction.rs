@@ -81,6 +81,27 @@ fn button_clicks_only_when_released_inside() {
 }
 
 #[test]
+fn a_click_asks_for_the_next_frame() {
+    // Content that changes on click without any animation still shows the
+    // change at once, without waiting for the pointer to move.
+    let mut rig = Rig::new();
+    let mut open = false;
+    let mut ui = |ctx: &mut Context| {
+        page(ctx, |ui| {
+            if !open && ui.allocate_response(vec2(120.0, 40.0), Sense::Click).clicked() {
+                open = true;
+            }
+        })
+    };
+    rig.idle(2, &mut ui);
+    rig.frame(&[Event::PointerMoved(vec2(100.0, 70.0))], &mut ui);
+    rig.frame(&[Event::PointerDown], &mut ui);
+    rig.frame(&[Event::PointerUp], &mut ui);
+    assert!(open);
+    assert!(rig.ctx.wants_repaint());
+}
+
+#[test]
 fn disabled_button_does_nothing() {
     let mut rig = Rig::new();
     let mut n = 0;
@@ -690,4 +711,92 @@ fn input_method_composes_before_it_commits() {
     }
     assert_eq!(s, "ab日本");
     assert_eq!(changed, 1);
+}
+
+#[test]
+fn sidebar_selects_on_press_and_the_page_follows_in_the_same_frame() {
+    let mut rig = Rig::new();
+    let selected = Cell::new(0usize);
+    // The page is drawn before the sidebar, as in most apps.
+    let shown = Cell::new(usize::MAX);
+    let mut ui = |ctx: &mut Context| {
+        region(ctx, "page", rect(300.0, 0.0, 800.0, 600.0), |ui| {
+            shown.set(selected.get());
+            ui.label(&format!("Page {}", selected.get()));
+        });
+        region(ctx, "sidebar", rect(0.0, 0.0, 280.0, 600.0), |ui| {
+            let mut s = selected.get();
+            nav_list(ui, &mut s, &[(Icon::Home, "Home"), (Icon::Star, "Starred")]);
+            selected.set(s);
+        });
+    };
+    rig.idle(2, &mut ui);
+    // The second row, while the button is still down.
+    rig.frame(&[Event::PointerMoved(vec2(100.0, 60.0))], &mut ui);
+    rig.frame(&[Event::PointerDown], &mut ui);
+    assert_eq!(selected.get(), 1, "a sidebar row is selected on press");
+    assert_eq!(shown.get(), 1, "the page drawn before the sidebar already shows it");
+}
+
+#[test]
+fn hidden_content_keeps_state_but_draws_and_takes_nothing() {
+    let mut rig = Rig::new();
+    let clicked = Cell::new(false);
+    let mut ui = |ctx: &mut Context| {
+        ctx.hidden(|ctx| {
+            region(ctx, "page", rect(0.0, 0.0, 400.0, 300.0), |ui| {
+                ctx_focusable_button(ui, &clicked);
+                ScrollArea::new().height(100.0).show(ui, |ui| {
+                    for i in 0..20 {
+                        ui.label(&format!("Row {i}"));
+                    }
+                });
+            });
+        });
+    };
+    rig.idle(2, &mut ui);
+    rig.click(vec2(40.0, 15.0), &mut ui);
+    rig.frame(&[Event::Key(Key::Tab), Event::Key(Key::Enter)], &mut ui);
+    assert!(!clicked.get(), "hidden widgets do not react");
+    assert!(!rig.ctx.wants_repaint(), "hidden content asks for no frames");
+    // The text was shaped, so the page is warm when it is shown.
+    assert!(rig.ctx.text.cached_layouts() > 10);
+}
+
+fn ctx_focusable_button(ui: &mut Ui, clicked: &Cell<bool>) {
+    if ui.button("Press").clicked() {
+        clicked.set(true);
+    }
+}
+
+#[test]
+fn a_focused_field_sleeps_between_blinks() {
+    let mut rig = Rig::new();
+    let mut text = String::from("Hello");
+    let mut ui = |ctx: &mut Context| {
+        page(ctx, |ui| {
+            ui.add(TextEdit::new(&mut text));
+        });
+    };
+    rig.idle(2, &mut ui);
+    rig.click(vec2(80.0, 62.0), &mut ui);
+    rig.idle(60, &mut ui);
+    assert!(!rig.ctx.wants_repaint(), "a blinking caret does not draw every frame");
+    let at = rig.ctx.repaint_deadline().expect("the next blink is scheduled");
+    assert!(at > rig.ctx.time && at - rig.ctx.time <= 0.56, "{at} {}", rig.ctx.time);
+}
+
+#[test]
+fn state_outlives_many_frames_of_a_busy_window() {
+    let mut rig = Rig::new();
+    let id = Id::new("remembered");
+    rig.frame(&[], &mut |ctx: &mut Context| ctx.set(id, 42u32));
+    // Two thousand frames in about 33 seconds: more than the frame limit,
+    // less than the time limit.
+    for _ in 0..2000 {
+        rig.frame(&[], &mut |_: &mut Context| {});
+    }
+    let kept = Cell::new(None);
+    rig.frame(&[], &mut |ctx: &mut Context| kept.set(ctx.try_get::<u32>(id)));
+    assert_eq!(kept.get(), Some(42));
 }

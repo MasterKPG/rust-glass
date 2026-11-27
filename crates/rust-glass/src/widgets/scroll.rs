@@ -27,6 +27,7 @@ pub struct ScrollArea {
     fade: Feather,
     inset_top: f32,
     inset_bottom: f32,
+    bar_inset: f32,
     id: &'static str,
 }
 
@@ -63,6 +64,7 @@ impl ScrollArea {
             fade: Feather::default(),
             inset_top: 0.0,
             inset_bottom: 0.0,
+            bar_inset: 4.0,
             id: "scroll",
         }
     }
@@ -93,9 +95,18 @@ impl ScrollArea {
         self.width = Some(width);
         self
     }
-    /// Width of the column the content is laid out in, for [`Self::both`].
+    /// Width of the column the content is laid out in. A vertical area
+    /// centers a narrower column and keeps the scroll bar at its own edge, so
+    /// a readable column in a wide window still scrolls from the window edge.
+    /// For [`Self::both`] it is the width of the content.
     pub fn content_width(mut self, w: f32) -> Self {
         self.content_width = Some(w);
+        self
+    }
+    /// Distance of the scroll bars from the edges of the area, in points.
+    /// The default is 4.
+    pub fn bar_inset(mut self, inset: f32) -> Self {
+        self.bar_inset = inset.max(0.0);
         self
     }
     /// Dissolve content over this distance at the top and bottom.
@@ -217,14 +228,20 @@ impl ScrollArea {
         if self.fade.left + self.fade.right + self.fade.top + self.fade.bottom > 0.0 {
             ui.mask = ui.painter().add_mask(sides, 0.0, false, feather);
         }
-        let min = vec2(view.min.x - shown[0], view.min.y - shown[1] + self.inset_top);
+        // A vertical area centers a column narrower than itself.
+        let column = match self.content_width {
+            Some(cw) if !self.x => cw.min(view.width()),
+            _ => view.width(),
+        };
+        let indent = ((view.width() - column) * 0.5).max(0.0);
+        let min = vec2(view.min.x - shown[0] + indent, view.min.y - shown[1] + self.inset_top);
         let visible = Rect::from_min_size(vec2(off[0], off[1]), view.size());
         let revealing = ui.ctx.reveal.is_some() && ui.ctx.reveal_rect.is_none();
         let (out, used) = if self.x && !self.y {
             let body = Rect { min, max: vec2(min.x + 1.0e5, view.max.y - self.inset_bottom) };
             ui.row_sized(id, body, |ui| f(ui, visible))
         } else {
-            let width = if self.x { self.content_width.unwrap_or(1.0e5) } else { view.width() };
+            let width = if self.x { self.content_width.unwrap_or(1.0e5) } else { column };
             let body = Rect { min, max: vec2(min.x + width, min.y + 1.0e5) };
             ui.in_rect_sized(id, body, |ui| f(ui, visible))
         };
@@ -278,14 +295,19 @@ impl ScrollArea {
             };
             let ax = &mut s.axes[a];
             let track = t1 - t0;
-            let len = (size[a] / ax.content * track).clamp(28.0, track);
+            // An area too short for a bar shows none.
+            if track < 8.0 {
+                continue;
+            }
+            let len = (size[a] / ax.content * track).clamp(28.0f32.min(track), track);
             let over = (off[a] - off[a].clamp(0.0, max[a])).abs();
             let len = (len - over * 0.6).max(12.0);
             let start = t0 + (track - len) * (off[a] / max[a]).clamp(0.0, 1.0);
+            let reach = 10.0 + self.bar_inset;
             let hit = if a == 1 {
-                Rect { min: vec2(view.max.x - 14.0, start), max: vec2(view.max.x, start + len) }
+                Rect { min: vec2(view.max.x - reach, start), max: vec2(view.max.x, start + len) }
             } else {
-                Rect { min: vec2(start, view.max.y - 14.0), max: vec2(start + len, view.max.y) }
+                Rect { min: vec2(start, view.max.y - reach), max: vec2(start + len, view.max.y) }
             };
             let r = ui.interact(id.with(("bar", a)), hit, Sense::Drag);
             let p0 = if a == 1 { ui.ctx.input.press_origin.y } else { ui.ctx.input.press_origin.x };
@@ -302,18 +324,23 @@ impl ScrollArea {
             engaged |= r.hovered || r.held;
             bars.push((a, r.id, r.hovered || r.held, start, len));
         }
-        if s.bar.step((recent || engaged) as u32 as f32, Tuning::new(0.3, 1.0), dt) || recent {
+        if s.bar.step((recent || engaged) as u32 as f32, Tuning::new(0.3, 1.0), dt) {
             ui.ctx.request_repaint();
+        } else if recent {
+            // The bars rest until they start to fade.
+            let left = 0.9 - (ui.ctx.time - s.last_move);
+            ui.ctx.request_repaint_after(std::time::Duration::from_secs_f64(left.max(0.001)));
         }
         let c = Color::black(0.38).lerp(Color::white(0.45), ui.surface.darkness());
         let alpha = s.bar.value;
         for (a, bar_id, hot, start, len) in bars {
             let wide = ui.ctx.animate_bool(bar_id.with("wide"), hot, Tuning::SNAP);
             let bw = 4.0 + 3.0 * wide;
+            let i = self.bar_inset;
             let r = if a == 1 {
-                Rect { min: vec2(view.max.x - 4.0 - bw, start), max: vec2(view.max.x - 4.0, start + len) }
+                Rect { min: vec2(view.max.x - i - bw, start), max: vec2(view.max.x - i, start + len) }
             } else {
-                Rect { min: vec2(start, view.max.y - 4.0 - bw), max: vec2(start + len, view.max.y - 4.0) }
+                Rect { min: vec2(start, view.max.y - i - bw), max: vec2(start + len, view.max.y - i) }
             };
             ui.painter().fill(r, Corner::Capsule, c.fade(alpha));
         }
@@ -346,6 +373,38 @@ mod tests {
     use crate::context::Context;
     use crate::geometry::rect;
     use crate::widgets::panel::region;
+
+    #[test]
+    fn an_area_shorter_than_its_bar_does_not_panic() {
+        let mut ctx = Context::new();
+        for t in 0..3 {
+            ctx.begin_frame(vec2(400.0, 300.0), 1.0, t as f64 / 60.0, &[]);
+            region(&mut ctx, "page", rect(0.0, 0.0, 400.0, 300.0), |ui| {
+                ScrollArea::new().height(20.0).show(ui, |ui| {
+                    for _ in 0..20 {
+                        ui.label("Row");
+                    }
+                });
+            });
+            ctx.end_frame();
+        }
+    }
+
+    #[test]
+    fn a_narrow_column_is_centered_with_the_bar_at_the_edge() {
+        let mut ctx = Context::new();
+        let mut at = Rect::default();
+        for t in 0..3 {
+            ctx.begin_frame(vec2(1000.0, 300.0), 1.0, t as f64 / 60.0, &[]);
+            region(&mut ctx, "page", rect(0.0, 0.0, 1000.0, 300.0), |ui| {
+                ScrollArea::new().content_width(400.0).show(ui, |ui| {
+                    at = ui.label("Row").rect;
+                });
+            });
+            ctx.end_frame();
+        }
+        assert_eq!(at.min.x, 300.0);
+    }
 
     #[test]
     fn masks_inside_a_fading_area_keep_its_fade() {

@@ -34,6 +34,8 @@ pub(crate) fn show_toasts(ctx: &mut Context) {
     let n = list.len();
     let mut shapes = Vec::new();
     let mut faces = Vec::new();
+    let mut moving = false;
+    let mut next_hide = f64::MAX;
     for (i, t) in list.iter_mut().enumerate() {
         if t.born.is_none() {
             t.born = Some(now);
@@ -42,8 +44,11 @@ pub(crate) fn show_toasts(ctx: &mut Context) {
         let age = now - t.born.unwrap_or(now);
         let show = age < 2.6 && i + 4 > n;
         let tune = ctx.tuning(if show { Tuning::new(0.46, 0.70) } else { Tuning::new(0.30, 1.0) });
-        t.t.step(show as u32 as f32, tune, ctx.dt);
-        t.y.step(y, ctx.tuning(Tuning::SMOOTH), ctx.dt);
+        moving |= t.t.step(show as u32 as f32, tune, ctx.dt);
+        moving |= t.y.step(y, ctx.tuning(Tuning::SMOOTH), ctx.dt);
+        if show {
+            next_hide = next_hide.min(2.6 - age);
+        }
         let l = ctx.text.layout(&t.text, &TextStyle::new(14.0).weight(Weight::Semibold));
         let iw = if t.icon.is_some() { 28.0 } else { 0.0 };
         let full = vec2(l.size.x + iw + 40.0, 46.0);
@@ -58,7 +63,12 @@ pub(crate) fn show_toasts(ctx: &mut Context) {
         }
     }
     list.retain(|t| t.born.is_some_and(|b| now - b < 2.6) || t.t.value > 0.01);
-    ctx.request_repaint();
+    // A toast that rests needs no frames until it leaves.
+    if moving || next_hide == f64::MAX {
+        ctx.request_repaint();
+    } else {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(next_hide.max(0.001)));
+    }
     let mut g = Glass::group(shapes, ctx.theme.thick).fuse(5.0);
     g.material.shadow_radius = 22.0;
     g.material.blur = 6.0;

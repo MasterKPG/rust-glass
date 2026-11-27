@@ -11,7 +11,7 @@ struct Glass {
     bounds: vec4f,
     clip: vec4f,
     // x: 0 bends equally in all directions, 1 only sideways.
-    // y: 0 disperses evenly, 1 only in the corners. w: tint follow.
+    // y: 0 disperses evenly, 1 only in the corners. z: darkness. w: tint follow.
     tint: vec4f,
     shape_start: u32,
     shape_count: u32,
@@ -51,6 +51,10 @@ struct Glass {
     shadow_radius: f32,
     shadow_y: f32,
     shadow_tint: f32,
+
+    glow_pos: vec2f,    // where a press lights the glass
+    glow: f32,
+    glow_radius: f32,
 };
 
 struct GShape {
@@ -325,16 +329,35 @@ fn fs(in: VOut) -> @location(0) vec4f {
             let k = g.dark_edge * edge * op * (1.0 - 0.92 * smoothstep(0.1, 0.8, far));
             c = mix(c, body_c * 0.5, k);
         }
+        // The end of the glass: a soft band where the surface curves away,
+        // a shade darker on light glass and lighter on dark glass, so the
+        // edge reads as the body turning rather than a drawn outline.
+        let band_w = max(min(g.inner_height * 0.55, f.half * 0.5), 2.0 * G.ppp);
+        let band = 1.0 - smoothstep(0.0, band_w, depth);
+        let toward = mix(vec3f(0.0), vec3f(1.0), g.tint.z);
+        c = mix(c, toward, band * band * mix(0.05, 0.08, g.tint.z) * op);
+
+        // The specular rim: a fine line that fades softly into the body.
         let rw = max(g.rim_width, 0.9);
         let line = gauss((sd - rw * 0.55) / (rw * 0.68));
+        let soft = exp(-max(sd, 0.0) / (rw * 3.2));
+        let profile = 0.55 * line + 0.45 * soft;
         let halo = exp(-depth / max(2.0 * G.ppp, 0.8)) * min(g.inner_glow * 2.4, 0.6) * smoothstep(0.0, 0.5, far);
         let dir = (1.0 - 0.9 * g.dark_edge) * pow(near, 1.6) + pow(far, 1.2);
         let key = g.rim_base + (1.0 - g.rim_base) * min(dir, 1.0);
         let rim_rgb = mix(vec3f(1.0), min(vibrance(c, 1.4) * 1.5 + 0.15, vec3f(1.0)), 0.25);
-        let rim_a = clamp(g.rim * (key * line + dir * halo), 0.0, 1.0) * op;
+        let rim_a = clamp(g.rim * (key * profile + dir * halo), 0.0, 1.0) * op;
         c = mix(c, rim_rgb, rim_a);
 
         c = mix(c, vec3f(1.0), g.brightness * op);
+
+        // Press light: spreads from the touch through the body and catches
+        // the rim nearby.
+        if (g.glow > 0.001) {
+            let q = (p - g.glow_pos) / max(g.glow_radius, 1.0);
+            let w = g.glow * exp(-dot(q, q) * 1.6);
+            c = mix(c, vec3f(1.0), clamp(w * mix(0.42, 0.30, g.tint.z) + w * profile * 0.6, 0.0, 1.0) * op);
+        }
 
         let fade = smoothstep(0.0, 0.25, op);
         let a = cov * fade;

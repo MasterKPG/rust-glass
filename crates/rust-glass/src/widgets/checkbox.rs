@@ -88,7 +88,8 @@ fn check_face(ui: &mut Ui, r: &Response, gel: &PressEffect, c: Rect, corner: Cor
     m.tint = Some(accent.alpha(0.92 * t));
     let mut g = Glass::new(c, corner, m);
     ui.ctx.prepare_glass(r.id, &mut g, true);
-    g.brightness = 0.05 * gel.amount.max(0.0);
+    g.brightness = 0.02 * gel.amount.max(0.0);
+    g.glow = gel.glow;
     ui.painter().glass(&g);
 }
 

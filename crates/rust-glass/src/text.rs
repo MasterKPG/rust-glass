@@ -15,6 +15,8 @@ use crate::geometry::{Vec2, vec2};
 use crate::icon::Icon;
 
 pub(crate) const ATLAS_SIZE: u32 = 2048;
+/// The glyph atlas grows to this size before it is ever cleared.
+pub(crate) const MAX_ATLAS_SIZE: u32 = 4096;
 pub(crate) const SPRITE_ATLAS_SIZE: u32 = 1024;
 
 /// Font weight.
@@ -220,7 +222,10 @@ pub struct TextEngine {
     pub(crate) fonts: FontSystem,
     swash: SwashCache,
     buffer: Buffer,
-    layouts: HashMap<u64, (Rc<TextLayout>, u64)>,
+    /// Layouts by key, with the frame and time they were last used.
+    layouts: HashMap<u64, (Rc<TextLayout>, u64, f64)>,
+    retention: f64,
+    time: f64,
     atlas: HashMap<Key, Option<AtlasEntry>>,
     shelf: Shelf,
     sprite_shelf: Shelf,
@@ -233,6 +238,12 @@ pub struct TextEngine {
     frame: u64,
     full: bool,
     ppp: f32,
+    /// Width and height of the glyph atlas in pixels.
+    pub(crate) atlas_size: u32,
+    /// The atlases were emptied since the renderer last uploaded, so what it
+    /// shows from the last frame is no longer valid.
+    pub(crate) atlas_reset: bool,
+    grown: bool,
 }
 
 impl Default for TextEngine {
@@ -287,6 +298,11 @@ impl TextEngine {
             frame: 0,
             full: false,
             ppp: 1.0,
+            retention: 30.0,
+            time: 0.0,
+            atlas_size: ATLAS_SIZE,
+            atlas_reset: false,
+            grown: false,
         }
     }
 
@@ -296,8 +312,21 @@ impl TextEngine {
         self.layouts.clear();
     }
 
-    pub(crate) fn begin_frame(&mut self, ppp: f32) {
+    /// Keeps layouts that are not drawn for at least `keep`. A layout is
+    /// dropped only when both this time and 240 frames have passed since it
+    /// was last used. The default is 30 seconds.
+    pub fn set_retention(&mut self, keep: std::time::Duration) {
+        self.retention = keep.as_secs_f64();
+    }
+
+    /// Number of laid out texts in the cache.
+    pub fn cached_layouts(&self) -> usize {
+        self.layouts.len()
+    }
+
+    pub(crate) fn begin_frame(&mut self, ppp: f32, time: f64) {
         self.frame += 1;
+        self.time = time;
         if ppp != self.ppp {
             self.ppp = ppp;
             self.layouts.clear();
@@ -308,13 +337,17 @@ impl TextEngine {
             // during this frame.
             self.full = false;
             self.atlas.clear();
-            self.shelf = Shelf::new(ATLAS_SIZE);
+            self.shelf = Shelf::new(self.atlas_size);
             self.sprite_shelf = Shelf::new(SPRITE_ATLAS_SIZE);
             self.uploads.clear();
+            self.atlas_reset = true;
         }
         if self.frame.is_multiple_of(240) {
-            let f = self.frame;
-            self.layouts.retain(|_, v| f - v.1 < 240);
+            let (f, now, keep) = (self.frame, self.time, self.retention);
+            // A budget keeps text that changes all the time, such as a clock,
+            // from filling memory while the time limit has not passed.
+            let keep = if self.layouts.len() > 20_000 { 0.0 } else { keep };
+            self.layouts.retain(|_, v| f - v.1 < 240 || now - v.2 < keep);
         }
     }
 
@@ -329,12 +362,12 @@ impl TextEngine {
         st.wrap.map(f32::to_bits).hash(&mut h);
         st.align.hash(&mut h);
         let key = h.finish();
-        if let Some((l, used)) = self.layouts.get_mut(&key) {
-            *used = self.frame;
+        if let Some((l, used, at)) = self.layouts.get_mut(&key) {
+            (*used, *at) = (self.frame, self.time);
             return l.clone();
         }
         let l = Rc::new(self.shape(text, st));
-        self.layouts.insert(key, (l.clone(), self.frame));
+        self.layouts.insert(key, (l.clone(), self.frame, self.time));
         l
     }
 
@@ -452,12 +485,13 @@ impl TextEngine {
     }
 
     fn insert(&mut self, color: bool, w: u32, h: u32, data: Vec<u8>, offset: Vec2) -> Option<AtlasEntry> {
-        let (shelf, size) = if color {
-            (&mut self.sprite_shelf, SPRITE_ATLAS_SIZE as f32)
-        } else {
-            (&mut self.shelf, ATLAS_SIZE as f32)
-        };
-        let Some((x, y)) = shelf.allocate(w, h) else {
+        let mut place = if color { self.sprite_shelf.allocate(w, h) } else { self.shelf.allocate(w, h) };
+        if place.is_none() && !color && self.atlas_size < MAX_ATLAS_SIZE {
+            self.grow_atlas();
+            place = self.shelf.allocate(w, h);
+        }
+        let size = if color { SPRITE_ATLAS_SIZE } else { self.atlas_size } as f32;
+        let Some((x, y)) = place else {
             self.full = true;
             return None;
         };
@@ -468,6 +502,24 @@ impl TextEngine {
             size: vec2(w as f32, h as f32),
             color,
         })
+    }
+
+    /// Doubles the glyph atlas instead of emptying it. Glyphs keep their
+    /// pixels in the top left quarter; the renderer copies them over.
+    fn grow_atlas(&mut self) {
+        self.grown = true;
+        self.atlas_size *= 2;
+        self.shelf.size = self.atlas_size;
+        for e in self.atlas.values_mut().flatten() {
+            if !e.color {
+                e.uv = e.uv.map(|v| v * 0.5);
+            }
+        }
+    }
+
+    /// The atlas grew during this frame.
+    pub(crate) fn take_grown(&mut self) -> bool {
+        std::mem::take(&mut self.grown)
     }
 
     /// The atlas overflowed during this frame; it is rebuilt on the next one.

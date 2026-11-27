@@ -137,6 +137,10 @@ pub struct Material {
     /// transparency change this material, from 0 to 1. Use 0 for glass that
     /// must stay clear, such as a lens above its own label.
     pub glass_tint_response: f32,
+    /// How liquid the glass feels in motion, from 0 (rigid) to 1. Liquid
+    /// glass stretches more as it speeds up and slows down, and wobbles
+    /// longer before it settles. 0.5 is the default of every preset.
+    pub liquidity: f32,
 }
 
 impl Material {
@@ -170,6 +174,7 @@ impl Material {
         tint: None,
         tint_follow: 1.0,
         glass_tint_response: 1.0,
+        liquidity: 0.5,
     };
 
     /// Clear glass that stays transparent, for controls over photos and video.
@@ -239,20 +244,20 @@ impl Material {
     /// out from the bar. A thin rim shows the bar from further inside, and
     /// the wide zone behind it pulls the edge of the bar inwards.
     pub const BLOB: Material = Material {
-        refraction: 20.0,
-        depth: 3.5,
+        refraction: 24.0,
+        depth: 8.0,
         outer_refraction: 0.0,
         outer_depth: 2.0,
-        pinch: 4.1,
-        pinch_width: 20.0,
-        dispersion: 0.75,
-        corner_dispersion: 1.0,
+        pinch: 6.0,
+        pinch_width: 26.0,
+        dispersion: 1.2,
+        corner_dispersion: 0.3,
         light_range: (0.0, 1.0),
         dark_range: (0.0, 1.0),
         saturation: 1.05,
-        rim: 0.85,
+        rim: 0.55,
         rim_width: 0.6,
-        rim_base: 0.62,
+        rim_base: 0.12,
         dark_edge: 0.0,
         inner_glow: 0.05,
         inner_shadow: 0.0,
@@ -372,6 +377,7 @@ impl Material {
             },
             tint_follow: l(self.tint_follow, o.tint_follow),
             glass_tint_response: l(self.glass_tint_response, o.glass_tint_response),
+            liquidity: l(self.liquidity, o.liquidity),
         }
     }
 }
@@ -423,6 +429,10 @@ pub struct Glass {
     pub brightness: f32,
     /// Extra rotation of the highlights, in radians.
     pub light_bend: f32,
+    /// Light under a finger or pointer that presses the glass: where it
+    /// touches, in points, and how strong the light is, from 0 to 1. Set by
+    /// [`PressEffect::apply`](crate::widgets::press::PressEffect::apply).
+    pub glow: Option<(Vec2, f32)>,
     /// Measure the backdrop for this slot.
     pub(crate) stat_key: Option<u64>,
 }
@@ -443,12 +453,18 @@ impl Glass {
             shadow_boost: 0.0,
             brightness: 0.0,
             light_bend: 0.0,
+            glow: None,
             stat_key: None,
         }
     }
     /// Sets [`Glass::presence`].
     pub fn presence(mut self, presence: f32) -> Self {
         self.presence = presence.clamp(0.0, 1.0);
+        self
+    }
+    /// Sets [`Glass::glow`]: light at `position` with `strength` from 0 to 1.
+    pub fn glow(mut self, position: Vec2, strength: f32) -> Self {
+        self.glow = (strength > 0.001).then_some((position, strength.min(1.0)));
         self
     }
     /// Sets [`Glass::fuse`].

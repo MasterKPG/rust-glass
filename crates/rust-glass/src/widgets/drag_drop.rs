@@ -19,6 +19,17 @@ const SLOP: f32 = 6.0;
 struct Grab {
     lift: Spring,
     shape: SpringRect,
+    /// Smoothed speed of the copy while it follows the pointer, in points
+    /// per second. A drop carries it on, so the copy flies on from where it
+    /// was let go.
+    velocity: Vec2,
+    /// The copy follows the pointer.
+    carried: bool,
+    /// The copy is on its way to its place after a drop or a cancel. The
+    /// item in the list stays hidden until it is there.
+    landing: bool,
+    /// The copy is over its place and fading into it.
+    arrived: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -60,6 +71,14 @@ impl Ui<'_> {
         self.drag_source_with_id(id, payload, f)
     }
 
+    /// [`Ui::drag_source`] with an id used as it is, not combined with the
+    /// id of this `Ui`. Give an item the same id in every list it can be
+    /// dropped in, and it lands where it was let go when it moves from one
+    /// list to another.
+    pub fn drag_source_id<P: Any + Clone>(&mut self, id: Id, payload: P, f: impl FnMut(&mut Ui)) -> Response {
+        self.drag_source_with_id(id, payload, f)
+    }
+
     /// [`Ui::drag_source`] with an id that is already final.
     fn drag_source_with_id<P: Any + Clone>(
         &mut self,
@@ -71,8 +90,17 @@ impl Ui<'_> {
         let lift_id = id.with("lift");
         let mut grab: Grab = self.ctx.get(lift_id);
         let old = self.opacity;
-        // The slot stays as a faint outline of what was picked up.
-        self.opacity *= 1.0 - 0.72 * grab.lift.value.clamp(0.0, 1.0);
+        let lift = grab.lift.value.clamp(0.0, 1.0);
+        // While the copy lands, it alone shows the item. It hands over to the
+        // slot in one frame once it has set down exactly on it, so the item
+        // is never seen twice.
+        let landing = grab.landing;
+        self.opacity *= if landing {
+            0.0
+        } else {
+            // The slot stays as a faint outline of what was picked up.
+            1.0 - 0.72 * lift
+        };
         let ((), rect) = self.scope_id(id.with("slot"), &mut f);
         self.opacity = old;
         let mut r = self.interact(id, rect, Sense::Drag);
@@ -101,34 +129,73 @@ impl Ui<'_> {
             _ => None,
         };
         let dt = self.ctx.dt;
-        let tuning = self.ctx.tuning(if held { Tuning::new(0.22, 0.74) } else { Tuning::new(0.26, 0.9) });
-        let mut moving = grab.lift.step(held as u32 as f32, tuning, dt);
+        let mut moving = false;
         match place {
-            Some(at) => grab.shape = SpringRect::new(at),
-            None => {
-                let back = self.ctx.tuning(Tuning::new(0.3, 0.9));
-                moving |= grab.shape.step(rect, back, back, dt);
+            Some(at) => {
+                if grab.carried && dt > 0.0 {
+                    let v = (at.center() - grab.shape.rect().center()) / dt;
+                    grab.velocity = grab.velocity.lerp(v, 0.35);
+                } else {
+                    grab.velocity = Vec2::ZERO;
+                }
+                grab.shape = SpringRect::new(at);
+                grab = Grab { carried: true, landing: false, arrived: false, ..grab };
             }
+            None => {
+                if grab.carried {
+                    // Let go: the copy keeps the speed it had and curves into
+                    // its place from there.
+                    let v = grab.velocity.length();
+                    let v = if v > 2600.0 { grab.velocity * (2600.0 / v) } else { grab.velocity };
+                    grab.shape.center.x.velocity = v.x;
+                    grab.shape.center.y.velocity = v.y;
+                    grab = Grab { carried: false, landing: true, arrived: false, ..grab };
+                }
+                let fly = self.ctx.tuning(Tuning::new(0.36, 0.84));
+                let size = self.ctx.tuning(Tuning::new(0.3, 0.9));
+                moving |= grab.shape.step(rect, fly, size, dt);
+            }
+        }
+        // It stays lifted on the way and sets down once it is over its place.
+        let away = (grab.shape.rect().center() - rect.center()).length();
+        grab.arrived = grab.landing && away < 1.0;
+        let up = held || (grab.landing && !grab.arrived);
+        let tuning = self.ctx.tuning(if up { Tuning::new(0.22, 0.74) } else { Tuning::new(0.24, 0.8) });
+        moving |= grab.lift.step(up as u32 as f32, tuning, dt);
+        if grab.landing && !up && grab.lift.value.abs() < 0.004 && grab.lift.velocity.abs() < 0.05 {
+            grab.landing = false;
+            grab.arrived = false;
+            grab.lift = Spring::new(0.0);
+            self.ctx.request_repaint();
         }
         if moving {
             self.ctx.request_repaint();
         }
         let lift = grab.lift.value;
-        if held || lift > 0.01 {
+        if held || landing || grab.landing || lift > 0.01 {
             let at = grab.shape.rect();
-            let at = Rect::from_center_size(at.center(), rect.size());
+            // Set down on whole pixels, as the slot is.
+            let at = if grab.arrived && lift < 0.3 {
+                rect
+            } else {
+                Rect::from_center_size(at.center(), rect.size())
+            };
             let layer = self.ctx.layer(Id::new("drag and drop"), Order::Tooltip);
             let mut ui = Ui::new(self.ctx, layer, id.with("lifted"), at);
             ui.spacing = self.spacing;
             // A plate of glass carries the content and swells as it lifts.
-            let plate = at.expand(10.0 * lift.clamp(0.0, 1.2));
+            let up = lift.clamp(0.0, 1.2);
+            let plate = at.expand(10.0 * up);
             let mut m = ui.ctx.theme.regular;
             m.shadow *= 1.0 + 0.6 * lift.clamp(0.0, 1.0);
             let mut g = Glass::new(plate, Corner::Radius(12.0 + 6.0 * lift.clamp(0.0, 1.0)), m)
                 .presence(lift.clamp(0.0, 1.0));
-            ui.surface = ui.ctx.prepare_glass(id.with("plate"), &mut g, true).surface();
+            let plate_surface = ui.ctx.prepare_glass(id.with("plate"), &mut g, true).surface();
+            // Low on the page the content takes the colors it has in its slot,
+            // so handing over to the slot shows no change.
+            ui.surface = if lift > 0.35 { plate_surface } else { self.surface };
             ui.painter().glass(&g);
-            ui.opacity = smoothstep(0.0, 0.5, lift);
+            ui.opacity = if landing { 1.0 } else { smoothstep(0.0, 0.5, lift) };
             f(&mut ui);
             r.changed = dragging;
         }

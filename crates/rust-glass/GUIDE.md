@@ -78,6 +78,8 @@ Implement `App` for your state and pass it to `run`.
 - `setup(&mut self, ctx)` runs once before the first frame. Upload images and change the theme here.
 - `update(&mut self, ctx, info)` runs for every frame. It reads input, changes your state and describes the whole screen. When the size of something had to be guessed, it runs again for the same frame without input.
 - `file_dropped(&mut self, ctx, path)` runs when a file is dropped on the window.
+- `close_requested(&mut self, ctx)` runs when the user closes the window. Return `false` to keep running, for example after `ctx.hide_window()` for an app that lives in the tray. `ctx.show_window()` brings it back.
+- `window_created(&mut self, window)` runs once with the `winit` window, for platform calls rust-glass does not make itself. The crate re-exports `winit`.
 
 The API is immediate mode: widgets take a reference to your data, draw it, and return a `Response`. There are no widget objects to keep around and no callbacks.
 
@@ -92,9 +94,15 @@ fn counter(ui: &mut Ui, n: &mut i32) {
 }
 ```
 
-The fields of `Options` are `title`, `size` and `min_size` in points, `vsync`, and `low_power`, which prefers the integrated GPU on machines with two.
+The fields of `Options` are `title`, `size` and `min_size` in points, `vsync`, `low_power`, which prefers the integrated GPU on machines with two, `visible` (false starts the app hidden), `icon` for the window and task bar, and `title_bar_follows_theme` and `title_bar_colors` for the title bar on Windows.
 
-`FrameInfo` holds timings of recent frames (`ui_ms`, `encode_ms`, `gpu`, `interval_ms`) in case you want to show them. `gpu.gpu_ms` is `None` where the GPU cannot measure time.
+`FrameInfo` holds timings of recent frames (`ui_ms`, `encode_ms`, `gpu`, `interval_ms`) in case you want to show them. These are smoothed, so one slow frame barely moves them. `info.last` has the last frame as measured and `info.peak` the slowest values of the last two seconds, which is what to look at for a hitch. `gpu.gpu_ms` is `None` where the GPU cannot measure time. `gpu.redrawn_px` tells how much of the window the last frame drew again.
+
+Set the environment variable `RUST_GLASS_TRACE` to a file name to have every frame written there, with its timings and the time from input to the frame on screen:
+
+```text
+t=46.676 frame ui 0.21 encode 0.70 gpu 1.45 interval 16.6 ms, 3 passes, 486 kpx redrawn, 486 kpx captured, press to present 4.3 ms
+```
 
 All lengths are in points. `ctx.screen` is the window, `ctx.pixels_per_point` the number of pixels per point.
 
@@ -237,9 +245,13 @@ The wheel scrolls the innermost area under the pointer that scrolls on that axis
 
 `.fade(top, bottom)` and `.fade_sides(left, right)` dissolve content at the edges, `.insets(top, bottom)` keeps room for floating bars, and `scroll_offset` and `set_scroll_offset` in `widgets::scroll` save and restore the position.
 
+For a readable column in a wide window, give a vertical area the full width and `.content_width(w)`. The column is centered and the scroll bar stays at the edge of the window. `.bar_inset(d)` moves the bar away from the edge. Outside a scroll area, `ui.with_max_width(w, ...)` centers a column the same way.
+
+A widget of your own that scrolls registers its rectangle with `ui.scroll_wheel(id, rect, x, y)`, which cuts it to the clip of the `Ui` and returns the wheel movement it receives.
+
 ## Drag and drop
 
-`ui.drag_source(id, payload, |ui| ...)` makes its content draggable. A press lifts the content onto a glass plate and its place in the layout fades. Once the pointer moves a few points, the plate follows it. When the button is let go, the content settles back into place. `ui.drop_zone::<P, _>(id, min_size, |ui| ...)` lights up while a payload of type `P` is over it and returns the payload in the frame it is dropped. Escape cancels a drag.
+`ui.drag_source(id, payload, |ui| ...)` makes its content draggable. A press lifts the content onto a glass plate and its place in the layout fades. Once the pointer moves a few points, the plate follows it. When the button is let go, the plate keeps the speed it had, flies on to the place of the item and sets down there; the item in the list stays hidden until it has landed. An item that can move from one list to another needs the same id in both, so it lands from where it was let go: give it one with `ui.drag_source_id(Id::new(key), payload, |ui| ...)`, which uses the id as it is. `ui.drop_zone::<P, _>(id, min_size, |ui| ...)` lights up while a payload of type `P` is over it and returns the payload in the frame it is dropped. Escape cancels a drag.
 
 ```rust
 use rust_glass::prelude::*;
@@ -537,6 +549,9 @@ Parameters that change the look the most:
 - `rim`, `dark_edge`, `inner_glow`: light on the edge.
 - `shadow`, `shadow_radius`, `shadow_tint`: the shadow, and how much color it carries.
 - `glass_tint_response`: how much the `glass_tint` setting applies. Set it to 0 for a lens that sits above its own label, or the label turns milky.
+- `liquidity`: how liquid the glass feels in motion, from 0 (rigid) to 1. Thumbs read it from `theme.lens`, the tab bar from `theme.blob`. Liquid glass stretches more as it speeds up and slows down, and wobbles longer before it settles.
+
+A press lights the glass where it touches, the way iOS does. Buttons get it through `PressEffect::apply`; for your own glass, set `glass.glow = Some((position, strength))` or call `.glow(position, strength)`.
 
 `.adaptive()` lets a panel switch between light and dark with its backdrop. Keep that for small panels.
 
@@ -629,7 +644,50 @@ Tunings: `SNAP` (no overshoot), `SMOOTH`, `PRESS` and `BOUNCY`, or `Tuning::new(
 
 `ctx.morph(key, view, rect)` moves an element from one view to another, such as a cover that grows from a grid into a detail page. Call it from whichever view draws the element, with the same key, and draw the element at the rectangle it returns. While the view stays the same the result is `rect`, so scrolling and layout changes follow at once. When the target moves during the trip, the element moves along with it. `ctx.is_morphing(key)` is true while the element is on its way, for example to draw it above the rest of the page.
 
-Call `ctx.request_repaint()` in every frame while something else moves, such as a video or a timer. `ctx.dt` is the time since the last frame in seconds and `ctx.time` the time since start. Nothing can wake an idle window from another thread yet. While a background job runs, request a repaint and poll its channel in `update`.
+Call `ctx.request_repaint()` in every frame while something else moves, such as a video. `ctx.dt` is the time since the last frame in seconds and `ctx.time` the time since start.
+
+Something that changes now and then, such as a level meter, a clock or a blinking caret, asks for one frame later with `ctx.request_repaint_after(duration)`. The window sleeps until then. A background thread wakes the window with a `Waker`:
+
+```rust
+use rust_glass::prelude::*;
+use std::time::Duration;
+
+fn meter(ui: &mut Ui, level: f32) {
+    ui.progress(level);
+    // 25 readings a second, and no frames in between.
+    ui.ctx.request_repaint_after(Duration::from_millis(40));
+}
+
+fn start_download(ctx: &Context) {
+    let waker = ctx.waker();
+    std::thread::spawn(move || {
+        // ... the work ...
+        if let Some(w) = waker {
+            w.wake();
+        }
+    });
+}
+```
+
+Only the part of the window that changed is drawn again. Glass keeps the backdrop it captured as long as nothing under it changed, so a meter that moves next to glass redraws the meter and the glass that sees it, not the window. `RUST_GLASS_FULL_REDRAW=1` draws every frame in full, for comparison.
+
+Widgets that select, such as the rows of `nav_list`, react when the button goes down (`Sense::Press`), not when it is released. When input changes state that was already drawn earlier in the same frame, for example the page next to a sidebar drawn before it, call `ctx.request_relayout()`: the frame runs again before it is shown. `nav_list` does that for you.
+
+To have a page ready before it is shown, draw it inside `ctx.hidden(...)` with the same ids as when it is shown. Text is shaped and widget state is kept, but nothing is painted, nothing reacts and nothing asks for frames:
+
+```rust
+use rust_glass::prelude::*;
+
+fn settings_page(ui: &mut Ui) {
+    ui.heading("Settings");
+}
+
+fn warm_up(ctx: &mut Context, area: Rect) {
+    ctx.hidden(|ctx| region(ctx, "settings", area, settings_page));
+}
+```
+
+The state of widgets that are not drawn is kept for five minutes and 1200 frames, whichever is later (`ctx.set_retention`). Shaped text is kept for 30 seconds and 240 frames (`ctx.text.set_retention`). A window that draws all the time therefore keeps a page it left a moment ago, scroll position included.
 
 ## Keyboard, clipboard and links
 
@@ -740,6 +798,10 @@ For logic only, drive a `Context` with `begin_frame` and `end_frame`. That needs
 **A dialog disappears without an animation.** It is called only while open. Call it every frame and let the `bool` decide.
 
 **An animation stops halfway.** Nothing asks for the next frame. Use `ctx.animate` or call `ctx.request_repaint()`.
+
+**The page shows the old selection for one frame after a click.** The page is drawn before the control that changed it. Call `ctx.request_relayout()` when the selection changes, or draw the control first.
+
+**Something lingers on screen that should be gone.** Run with `RUST_GLASS_FULL_REDRAW=1`. If that fixes it, the part of the window drawn again missed it; please report it with the steps.
 
 **A screen reader reads a control without a name.** It has no text of its own. Name it with `ui.ctx.access_label(response.id, "Name")`.
 

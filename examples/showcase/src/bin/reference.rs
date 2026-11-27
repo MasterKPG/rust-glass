@@ -92,6 +92,110 @@ impl App for TabScene {
     }
 }
 
+/// A tab bar over App Store like content, at the scale of the iOS 27 clips
+/// in `references/Liquid Glass iOS27 reference`.
+struct StoreScene {
+    sel: usize,
+    dark: bool,
+}
+
+impl App for StoreScene {
+    fn update(&mut self, ctx: &mut Context, _: &FrameInfo) {
+        ctx.theme.dark = self.dark;
+        let (bg, fg) = if self.dark { (Color::BLACK, Color::WHITE) } else { (Color::WHITE, Color::BLACK) };
+        ctx.clear_color = bg;
+        let w = ctx.screen.width();
+        let mut p = ctx.background();
+        p.fill(
+            Rect::from_min_size(vec2(24.0, -10.0), vec2(70.0, 44.0)),
+            Corner::Capsule,
+            Color::hex(0xF5A31B),
+        );
+        p.fill(Rect::from_min_size(vec2(40.0, -4.0), vec2(36.0, 30.0)), Corner::Capsule, bg);
+        let big = ctx.text.layout("This week's favourites", &TextStyle::new(19.0).weight(Weight::Bold));
+        let top = ctx.text.layout("with friends", &TextStyle::new(12.0).weight(Weight::Semibold));
+        let small = ctx.text.layout("Share the moment", &TextStyle::new(8.0).weight(Weight::Semibold));
+        let mut p = ctx.background();
+        p.text(vec2(24.0, 88.0), &big, fg);
+        p.text(vec2(104.0, -4.0), &top, fg);
+        p.text(vec2(104.0, 14.0), &small, Color::gray(0.55));
+        TabBar::new(
+            &mut self.sel,
+            &[
+                (Icon::Home, "Today"),
+                (Icon::Plane, "Games"),
+                (Icon::Layers, "Apps"),
+                (Icon::Grid, "Arcade"),
+                (Icon::Search, "Search"),
+            ],
+        )
+        .show_at(ctx, Id::new("tabs"), vec2(w * 0.5, STORE_BAR_Y));
+    }
+}
+
+const STORE_PPP: f32 = 2.6;
+const STORE_BAR_Y: f32 = 66.0;
+
+/// Plays a press, a hold, a drag across two tabs and a release, and writes
+/// every other frame (30 per second) to `dir/store_NAME/`.
+fn store(dir: &str, dark: bool) {
+    let (w, hh) = (1180, 330);
+    let mut h = Headless::new(w, hh, STORE_PPP).expect("gpu");
+    h.ctx.theme.adaptive = false;
+    h.ctx.theme.accent = Color::hex(0x0A84FF);
+    let mut app = StoreScene { sel: 2, dark };
+    let name = if dark { "dark" } else { "light" };
+    let folder = format!("{dir}/store_{name}");
+    std::fs::create_dir_all(&folder).expect("create output directory");
+    let dt = 1.0 / 60.0;
+    let cx = w as f32 / STORE_PPP * 0.5;
+    let tab = |i: f32| vec2(cx + (i - 2.0) * 77.0, STORE_BAR_Y);
+    h.settle(&mut app, 1.0);
+    let mut frame = 0;
+    let mut run = |h: &mut Headless, app: &mut StoreScene, events: Vec<Event>| {
+        h.step(app, dt, &events);
+        if frame % 2 == 0 {
+            save(h, w, hh, &format!("{folder}/{:04}.png", frame / 2));
+        }
+        frame += 1;
+    };
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+    run(&mut h, &mut app, vec![Event::PointerMoved(tab(2.0))]);
+    for _ in 0..9 {
+        run(&mut h, &mut app, vec![]);
+    }
+    run(&mut h, &mut app, vec![Event::PointerDown]);
+    for _ in 0..23 {
+        run(&mut h, &mut app, vec![]);
+    }
+    // Two tabs to the left in about half a second, as in the clip.
+    for i in 1..=32 {
+        let t = ease(i as f32 / 32.0);
+        run(&mut h, &mut app, vec![Event::PointerMoved(tab(2.0 - 2.0 * t))]);
+    }
+    for _ in 0..30 {
+        run(&mut h, &mut app, vec![]);
+    }
+    for i in 1..=16 {
+        let t = ease(i as f32 / 16.0);
+        run(&mut h, &mut app, vec![Event::PointerMoved(tab(1.0 * t))]);
+    }
+    run(&mut h, &mut app, vec![Event::PointerUp]);
+    for _ in 0..50 {
+        run(&mut h, &mut app, vec![]);
+    }
+    // A tap on another tab.
+    run(&mut h, &mut app, vec![Event::PointerMoved(tab(3.0))]);
+    run(&mut h, &mut app, vec![Event::PointerDown]);
+    for _ in 0..5 {
+        run(&mut h, &mut app, vec![]);
+    }
+    run(&mut h, &mut app, vec![Event::PointerUp]);
+    for _ in 0..60 {
+        run(&mut h, &mut app, vec![]);
+    }
+}
+
 /// Tab bar at the scale of the third clip, at one transparency setting.
 fn tabs(dir: &str, name: &str, frost: f32) {
     let (w, hh, ppp) = (960, 230, 2.135);
@@ -136,6 +240,11 @@ fn save(h: &Headless, w: u32, hgt: u32, path: &str) {
 fn main() {
     let dir = std::env::args().nth(1).unwrap_or_else(|| "captures".into());
     std::fs::create_dir_all(&dir).expect("create output directory");
+    if std::env::args().nth(2).as_deref() == Some("store") {
+        store(&dir, false);
+        store(&dir, true);
+        return;
+    }
 
     let (w, hh) = (1080, 318);
     let mut h = Headless::new(w, hh, PPP).expect("gpu");

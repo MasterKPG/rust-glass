@@ -216,6 +216,26 @@ impl<'a> Ui<'a> {
         self.ctx.interact(id, rect, self.clip, self.layer, sense)
     }
 
+    /// Registers `rect` as a scroll area for the wheel on the axes `x` and `y`
+    /// and returns the movement it receives. The part outside [`Self::clip`]
+    /// does not take the wheel.
+    pub fn scroll_wheel(&mut self, id: Id, rect: Rect, x: bool, y: bool) -> Vec2 {
+        if !self.enabled {
+            return Vec2::ZERO;
+        }
+        let visible = rect.intersect(self.clip);
+        self.ctx.scroll_area_axes(id, visible, self.layer, x, y)
+    }
+
+    /// Runs `f` as usual, but nothing it adds is shown or reacts. See
+    /// [`Context::hidden`]. The widgets still take space in this layout.
+    pub fn hidden<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> R {
+        let saved = self.ctx.enter_hidden();
+        let out = f(self);
+        self.ctx.leave_hidden(saved);
+        out
+    }
+
     /// Makes the space used so far at least `size`, measured from the top left.
     pub fn reserve(&mut self, size: Vec2) {
         self.content.max = self.content.max.max(self.max_rect.min + size);
@@ -369,6 +389,29 @@ impl<'a> Ui<'a> {
         let used = ui.content.size();
         self.remember(id, used);
         self.allocate(vec2(width, used.y));
+        out
+    }
+
+    /// Stacks the widgets added in `f` in a column at most `max_width` points
+    /// wide, centered in the available width. Use it for a readable column in
+    /// a wide window; a [`ScrollArea`](crate::prelude::ScrollArea) around it
+    /// keeps its scroll bar at the edge of the window.
+    pub fn with_max_width<R>(&mut self, max_width: f32, f: impl FnOnce(&mut Ui) -> R) -> R {
+        let id = self.next_id();
+        let avail = self.available_width();
+        let width = avail.min(max_width).max(0.0);
+        let gap = if self.first { 0.0 } else { self.spacing };
+        let start = match self.dir {
+            Dir::Horizontal { .. } => vec2(self.cursor.x + gap, self.max_rect.min.y),
+            Dir::Vertical => self.cursor + vec2((avail - width) * 0.5, gap),
+        };
+        let max = Rect { min: start, max: vec2(start.x + width, self.max_rect.max.y) };
+        let mut ui = self.sub(id, max, Dir::Vertical);
+        let out = f(&mut ui);
+        let used = ui.content.size();
+        let align = std::mem::replace(&mut self.align, Align::Start);
+        self.allocate(vec2(if self.is_horizontal() { width } else { avail }, used.y));
+        self.align = align;
         out
     }
 
@@ -574,21 +617,9 @@ impl<'a> Ui<'a> {
         if let Some(n) = self.access(id, role, r) {
             n.label(text);
         }
-        Response {
-            id,
-            rect: r,
-            hovered: self.ctx.input.pointer.is_some_and(|p| r.contains(p)),
-            held: false,
-            pressed: false,
-            released: false,
-            clicked: false,
-            double_clicked: false,
-            secondary_clicked: false,
-            focused: false,
-            changed: false,
-            delta: Vec2::ZERO,
-            pointer: self.ctx.input.pointer,
-        }
+        let mut res = Response::idle(id, r, self.ctx.input.pointer);
+        res.hovered = !self.ctx.is_hidden() && self.ctx.input.pointer.is_some_and(|p| r.contains(p));
+        res
     }
 
     /// Adds a thin line across the layout direction.

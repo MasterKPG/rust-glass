@@ -34,7 +34,7 @@ impl<'a> TabBar<'a> {
         let pitch = 77.0;
         let pill = vec2(86.0, 54.0);
         let pad = 4.0;
-        let blob = vec2(104.0, 72.4);
+        let blob = vec2(116.0, 82.0);
         let size = vec2(pitch * (n - 1) as f32, 0.0) + pill + Vec2::splat(pad * 2.0);
         let bar = Rect::from_center_size(center, size).snap(ctx.pixels_per_point);
         let center = bar.center();
@@ -80,8 +80,9 @@ impl<'a> TabBar<'a> {
         }
         let target = dragged.unwrap_or(at(*self.selected));
         let follow =
-            if dragged.is_some() && !r.pressed { Tuning::new(0.14, 0.88) } else { Tuning::new(0.38, 0.80) };
-        let f = d.step_flex(ctx, target, follow, r.held, pill, blob, ThumbFlex::BLOB);
+            if dragged.is_some() && !r.pressed { Tuning::new(0.14, 0.88) } else { Tuning::new(0.30, 0.86) };
+        let flex = ThumbFlex::BLOB.liquid(ctx.theme.blob.liquidity);
+        let f = d.step_flex(ctx, target, follow, r.held, pill, blob, flex);
         store_thumb(ctx, id, d);
         let lift = f.lift.clamp(0.0, 1.0);
 
@@ -95,9 +96,26 @@ impl<'a> TabBar<'a> {
         // Squeezed as a whole, so a tall blob keeps its flat top and bottom.
         let round = Corner::Stretched { base: f.base, power: lerp(2.18, 2.3, lift) };
 
+        // Light under the finger, which stays where it was when let go and
+        // fades there.
+        let glow = ctx.animate(
+            id.with("glow"),
+            r.held as u32 as f32,
+            if r.held { Tuning::new(0.16, 1.0) } else { Tuning::new(0.5, 1.0) },
+        );
+        let mut glow_at: Vec2 = ctx.get(id.with("glow at"));
+        if r.held
+            && let Some(p) = r.pointer
+        {
+            glow_at = vec2(p.x.clamp(body.min.x, body.max.x), p.y.clamp(body.min.y, body.max.y)) - center;
+            ctx.set(id.with("glow at"), glow_at);
+        }
+        let glow_at = center + glow_at;
+
         let mut g = Glass::new(body, Corner::Capsule, ctx.theme.regular);
         let a = ctx.prepare_glass(id, &mut g, true);
-        g.brightness = 0.09 * press;
+        g = g.glow(glow_at, glow * lerp(0.5, 0.2, a.darkness));
+        g.brightness = 0.03 * press;
         let s = a.surface();
         let accent = ctx.theme.accent;
         let accent = if a.darkness > 0.5 { accent.lerp(Color::WHITE, 0.15) } else { accent };
@@ -109,7 +127,9 @@ impl<'a> TabBar<'a> {
         m.pinch *= 1.0 - 0.6 * veil;
         m.dispersion *= 1.0 - 0.7 * veil;
         m.inner_glow += 0.10 * veil;
-        let mut lens = Glass::new(drop, round, m).presence(lift);
+        // The lens stays clear on dark glass, where light would turn it milky.
+        let mut lens =
+            Glass::new(drop, round, m).presence(lift).glow(glow_at, glow * lerp(0.45, 0.12, a.darkness));
         lens.light_bend = f.bend;
         // The labels bend on their own, and only over the bar: the caps that
         // stand proud of it belong to the lens.
@@ -125,7 +145,10 @@ impl<'a> TabBar<'a> {
 
         let mut p = ctx.painter(layer, Rect::EVERYTHING);
         p.glass(&g);
-        p.fill(drop, round, s.strong_fill_color().fade((1.0 - lift * 1.5).max(0.0) * 0.8));
+        // The selection at rest is a flat shade of the bar, as on iOS 27:
+        // slightly darker on light glass, much darker on dark glass.
+        let pill = Color::black(lerp(0.09, 0.50, a.darkness));
+        p.fill(drop, round, pill.fade((1.0 - lift * 1.5).max(0.0)));
         p.fill(drop, round, milk);
         let draw = |p: &mut crate::paint::Painter, c: Color, k: f32| {
             for (i, label) in labels.iter().enumerate() {
