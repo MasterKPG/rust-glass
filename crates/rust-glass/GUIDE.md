@@ -682,6 +682,34 @@ fn start_download(ctx: &Context) {
 
 Only the part of the window that changed is drawn again. Glass keeps the backdrop it captured as long as nothing under it changed, so a meter that moves next to glass redraws the meter and the glass that sees it, not the window. `RUST_GLASS_FULL_REDRAW=1` draws every frame in full, for comparison.
 
+Large blurred glass, such as a sidebar, a sheet or a page that blurs as it appears, draws its smooth inside at half resolution and scales it up. Only the edge, where the glass bends and catches the light, is drawn at full size. The picture stays the same within one step of 8 bit color. `RUST_GLASS_NO_HALF=1` turns it off.
+
+On a GPU that cannot keep up, a window lowers the quality of its glass by itself, and raises it again once there is room. `ctx.quality` sets how far it may go:
+
+```rust
+use rust_glass::prelude::*;
+
+fn configure(ctx: &mut Context) {
+    // Never simplify, whatever the GPU.
+    ctx.quality = Quality::Full;
+}
+
+fn status(ui: &mut Ui, info: &FrameInfo) {
+    if info.gpu.quality != Quality::Full {
+        ui.caption("Glass simplified to keep up");
+    }
+}
+```
+
+| Value | Meaning |
+| --- | --- |
+| `Auto` | The default for windows. Full quality, one step lower after three large frames over `Quality::AUTO_BUDGET_MS` (14 ms) of GPU time, and back up after 120 frames with plenty of room. Needs a GPU that can time frames. |
+| `Full` | Always full quality. `Headless` starts with it. |
+| `Reduced` | Glass casts no shadow, so it covers only its body. On integrated GPUs glass costs by the pixels it covers, so this saves the most: about 12 percent of a 4K frame on Intel UHD Graphics, and a fifth of opening a menu or a sheet. |
+| `Low` | Also no rainbow edges, no light spilled onto edges, and plain filtered blur. |
+
+`info.gpu.quality` is the step a frame was drawn with.
+
 Widgets that select, such as the rows of `nav_list`, react when the button goes down (`Sense::Press`), not when it is released. When input changes state that was already drawn earlier in the same frame, for example the page next to a sidebar drawn before it, call `ctx.request_relayout()`: the frame runs again before it is shown. `nav_list` does that for you.
 
 To have a page ready before it is shown, draw it inside `ctx.hidden(...)` with the same ids as when it is shown. Text is shaped and widget state is kept, but nothing is painted, nothing reacts and nothing asks for frames:
@@ -794,7 +822,7 @@ fn screenshot(app: &mut impl App) -> Result<Vec<u8>, String> {
 }
 ```
 
-`h.set_full_redraw(true)` draws every frame in full, so `h.info.gpu` times the whole window rather than the part that changed.
+`h.set_full_redraw(true)` draws every frame in full, so `h.info.gpu` times the whole window rather than the part that changed. `Headless` draws at `Quality::Full`, so renders are the same on every machine; set `h.ctx.quality` to render another step, and `h.set_half_resolution(false)` to draw large blurred glass at full size everywhere.
 
 For logic only, drive a `Context` with `begin_frame` and `end_frame`. That needs no GPU. [tests/interaction.rs](https://github.com/MasterKPG/rust-glass/blob/main/crates/rust-glass/tests/interaction.rs) does it for the built in widgets.
 
@@ -815,6 +843,8 @@ For logic only, drive a `Context` with `begin_frame` and `end_frame`. That needs
 **The page shows the old selection for one frame after a click.** The page is drawn before the control that changed it. Call `ctx.request_relayout()` when the selection changes, or draw the control first.
 
 **Something lingers on screen that should be gone.** Run with `RUST_GLASS_FULL_REDRAW=1`. If that fixes it, the part of the window drawn again missed it; please report it with the steps.
+
+**Glass lost its shadow on a slow machine.** The window stepped down its quality to keep up. Set `ctx.quality = Quality::Full` to keep the full look at any frame rate.
 
 **A screen reader reads a control without a name.** It has no text of its own. Name it with `ui.ctx.access_label(response.id, "Name")`.
 

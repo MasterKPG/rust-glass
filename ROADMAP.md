@@ -26,13 +26,14 @@ A Rust UI framework whose controls look and move like Liquid Glass on every desk
 - Content blur during transitions
 - Polish of every transition: menus, overlays, collapsing sections, presses and drags
 
-### v0.4: Speed
+### v0.4: Speed (released 2026-11-28)
 Goal: a steady frame rate on integrated GPUs at 4K, with no loss in how glass looks.
-- A frame budget per showcase page, checked in CI (done: pages and interactions, against the commit before each push). A page drawn in full takes 3.8 to 5.4 ms of GPU time at 1770 x 1170 on Intel UHD Graphics.
-- Backdrop copies and blurs only where something changed, then damage tracking for the whole window (done: a still frame costs about 0.4 ms)
-- Blurred glass read from a lower level of the blur chain (done: no sharp copy, captures down about 70 percent), then large blurred glass drawn at half resolution
-- An automatic quality step for slow GPUs, and no allocation per frame on the CPU side
-- Springs that stop when the change is no longer visible, so the window goes idle sooner (done)
+- A frame budget per showcase page, checked in CI against the commit before each push: GPU time, passes, captured pixels, allocations and frames until rest. A page drawn in full takes 3.2 to 5 ms of GPU time at 1770 x 1170 on Intel UHD Graphics.
+- Damage tracking for the whole window: a still frame costs about 0.4 ms
+- Blurred glass read from a lower level of the blur chain (captures down about 70 percent), and the inside of large blurred glass drawn at half resolution
+- An automatic quality step for GPUs that cannot keep up. Measured at 4K on Intel UHD Graphics, the time goes to the pixels glass covers, not its shading, so the first step drops glass shadows
+- Renderer and widget state reuse their memory from frame to frame. What still allocates per frame is mostly inside wgpu, and the count is part of the frame budget
+- Springs that stop when the change is no longer visible, so the window goes idle sooner
 
 ### v0.5: Components
 Goal: the controls an app needs, matching the Liquid Glass set of iOS 26 and 27.

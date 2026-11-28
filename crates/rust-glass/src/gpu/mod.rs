@@ -27,6 +27,15 @@ const PAD: u32 = 32;
 const MAX_PROBES: u64 = 512;
 const INFO_STRIDE: u64 = 256;
 const MAX_PASSES: u64 = 64;
+/// Format of the half resolution target. It needs a real alpha channel.
+const HALF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Glass blurred by at least this many pixels has a smooth inside, drawn at
+/// half resolution.
+const HALF_BLUR: f32 = 6.0;
+/// The inside must be at least this large in pixels on both axes.
+const HALF_MIN: f32 = 64.0;
+/// Shape kind of the inside of glass drawn at half resolution.
+const HALF_SHAPE: u32 = 6;
 
 /// Device and queue, shared by all windows.
 pub struct Gpu {
@@ -89,6 +98,96 @@ struct Globals {
     light: [f32; 2],
     time: f32,
     ppp: f32,
+    /// The quality step: 0 full, 1 reduced, 2 low.
+    quality: f32,
+    pad: [f32; 3],
+}
+
+/// How far the renderer may simplify glass to keep up with the display.
+///
+/// Set it with [`Context::quality`](crate::Context::quality). The step in
+/// effect is in [`FrameStats::quality`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Quality {
+    /// Full quality, a step lower while large frames take longer than
+    /// [`Quality::AUTO_BUDGET_MS`] on the GPU, and back up once there is room
+    /// again. The default for windows. It needs a GPU that can time frames;
+    /// elsewhere it stays at full quality.
+    #[default]
+    Auto,
+    /// Always full quality. [`Headless`](crate::headless::Headless) starts
+    /// with it, so renders are the same on every machine.
+    Full,
+    /// Glass casts no shadow, so it covers only its own body. This saves the
+    /// most: glass costs by the pixels it covers.
+    Reduced,
+    /// The least work: no shadow, no rainbow edges, no light spilled onto
+    /// edges, and blur read with plain filtering.
+    Low,
+}
+
+impl Quality {
+    /// GPU time per frame above which [`Quality::Auto`] steps down.
+    pub const AUTO_BUDGET_MS: f32 = 14.0;
+
+    fn step(self) -> u32 {
+        match self {
+            Quality::Auto | Quality::Full => 0,
+            Quality::Reduced => 1,
+            Quality::Low => 2,
+        }
+    }
+
+    fn from_step(step: u32) -> Self {
+        match step {
+            0 => Quality::Full,
+            1 => Quality::Reduced,
+            _ => Quality::Low,
+        }
+    }
+}
+
+/// Frames in a row over the budget before [`Quality::Auto`] steps down.
+const AUTO_OVER: u32 = 3;
+/// Frames in a row with room to spare before it steps back up.
+const AUTO_UNDER: u32 = 120;
+
+/// The automatic quality step: follows the GPU time of frames that redraw a
+/// large part of the window.
+#[derive(Default)]
+struct AutoQuality {
+    step: u32,
+    over: u32,
+    under: u32,
+}
+
+impl AutoQuality {
+    /// Takes the time of one frame. Returns true when the step changed.
+    fn feed(&mut self, ms: f32) -> bool {
+        let budget = Quality::AUTO_BUDGET_MS;
+        if ms > budget {
+            self.under = 0;
+            self.over += 1;
+            if self.over >= AUTO_OVER && self.step < 2 {
+                self.step += 1;
+                self.over = 0;
+                return true;
+            }
+        } else if ms * 1.8 < budget {
+            // A step up costs more than this frame did; only with room to spare.
+            self.over = 0;
+            self.under += 1;
+            if self.under >= AUTO_UNDER && self.step > 0 {
+                self.step -= 1;
+                self.under = 0;
+                return true;
+            }
+        } else {
+            self.over = 0;
+            self.under = 0;
+        }
+        false
+    }
 }
 
 #[repr(C)]
@@ -209,6 +308,26 @@ fn glass_reach(g: &GlassInst, b: &Px, probe: bool, ppp: f32) -> (u32, f32) {
     (lod, reach)
 }
 
+/// The inside of a glass element that can be drawn at half resolution, in
+/// whole pixels: the part of its body where nothing changes faster than the
+/// blur. The lens, rim, edge band and dark line all live in the margin left
+/// around it.
+fn interior(data: &DrawData, g: &GlassInst, ppp: f32) -> Option<Px> {
+    if g.shape_count != 1 || g.blur < HALF_BLUR || g.opacity <= 0.0 {
+        return None;
+    }
+    let s = data.gshapes.get(g.shape_start as usize)?;
+    let curve = g.inner_height.max(g.outer_height).max(g.pinch_width).max(2.0 * ppp);
+    let inset = curve + 8.0 * g.rim_width.max(0.9) + 4.0 * ppp + 0.3 * s.radius[0].max(s.radius[1]);
+    let r = Px {
+        x0: (s.center[0] - s.half[0] + inset).ceil(),
+        y0: (s.center[1] - s.half[1] + inset).ceil(),
+        x1: (s.center[0] + s.half[0] - inset).floor(),
+        y1: (s.center[1] + s.half[1] - inset).floor(),
+    };
+    (r.x1 - r.x0 >= HALF_MIN && r.y1 - r.y0 >= HALF_MIN).then_some(r)
+}
+
 /// The body of a glass element: the union of its shapes.
 fn glass_body(data: &DrawData, g: &GlassInst) -> Px {
     let mut body = Px::NONE;
@@ -270,14 +389,16 @@ struct Damage {
     /// Per glass in plan order: its look, its input and its pass.
     inputs: Vec<(u64, u64, u32)>,
     prev_inputs: Vec<(u64, u64, u32)>,
+    /// For each glass in plan order: it reads its backdrop again.
+    dirty: Vec<bool>,
+    looks: Vec<u64>,
+    moved: Vec<Px>,
 }
 
 /// The result of [`Damage::find`].
 struct Found {
     /// The area to draw again, aligned to whole capture blocks.
     area: Px,
-    /// For each glass in plan order: it reads its backdrop again.
-    dirty: Vec<bool>,
 }
 
 impl Damage {
@@ -334,11 +455,13 @@ impl Damage {
         let mask =
             |masks: &[u64], i: u32| if i == 0 { 0 } else { masks.get(i as usize - 1).copied().unwrap_or(1) };
         self.inputs.clear();
-        let mut dirty = Vec::new();
-        let mut looks = Vec::new();
+        let mut dirty = std::mem::take(&mut self.dirty);
+        let mut looks = std::mem::take(&mut self.looks);
         // Glass that reads again may look different, which glass in later
         // passes that reads over it must see.
-        let mut moved: Vec<Px> = Vec::new();
+        let mut moved = std::mem::take(&mut self.moved);
+        dirty.clear();
+        moved.clear();
         for (level, pass) in plan.passes.iter().enumerate() {
             // What the glass of this pass reads: the passes before it.
             looks.clear();
@@ -386,9 +509,12 @@ impl Damage {
         }
         std::mem::swap(&mut self.inputs, &mut self.prev_inputs);
         std::mem::swap(&mut self.tiles, &mut self.prev);
+        self.looks = looks;
+        self.moved = moved;
         if !self.valid {
             self.valid = true;
-            return Some(Found { area: screen, dirty });
+            self.dirty = dirty;
+            return Some(Found { area: screen });
         }
         let mut area = Px::NONE;
         for y in 0..h {
@@ -409,10 +535,11 @@ impl Damage {
                 i += 1;
             }
         }
+        self.dirty = dirty;
         if area.empty() {
             return None;
         }
-        Some(Found { area: area.align(PAD as f32).intersect(&screen), dirty })
+        Some(Found { area: area.align(PAD as f32).intersect(&screen) })
     }
 }
 
@@ -444,18 +571,15 @@ struct Pass {
     glass: Vec<GlassUse>,
 }
 
-/// A pass while it is being collected.
-#[derive(Default)]
-struct Work {
-    pass: Pass,
-    shapes: Vec<ShapeInst>,
-}
-
 #[derive(Default)]
 struct Plan {
     passes: Vec<Pass>,
     /// Shapes reordered by pass.
     shapes: Vec<ShapeInst>,
+    /// The shapes of each pass while planning.
+    pass_shapes: Vec<Vec<ShapeInst>>,
+    /// Emptied passes of earlier frames, kept so planning allocates nothing.
+    spare: Vec<Pass>,
 }
 
 const TILE: f32 = 8.0;
@@ -527,6 +651,23 @@ pub struct FrameStats {
     pub gpu_ms_last: Option<f32>,
     /// Pixels drawn again. Only the part of the window that changed is drawn.
     pub redrawn_px: u64,
+    /// The quality step the frame was drawn with: `Full`, `Reduced` or `Low`.
+    pub quality: Quality,
+}
+
+/// Lists a frame fills, kept from frame to frame.
+#[derive(Default)]
+struct Scratch {
+    /// The captures of every pass, and where each pass's start and end.
+    captures: Vec<Capture>,
+    capture_ranges: Vec<std::ops::Range<usize>>,
+    caps: Vec<Capture>,
+    lods: Vec<u32>,
+    probe_list: Vec<u32>,
+    probe_ranges: Vec<std::ops::Range<u32>>,
+    rects: Vec<[f32; 4]>,
+    infos: Vec<u8>,
+    copied: Vec<(u32, u32, u32, u32, u32)>,
 }
 
 struct Readback {
@@ -542,6 +683,9 @@ struct Timing {
     read: wgpu::Buffer,
     state: Arc<AtomicU8>,
     period: f32,
+    /// Whether the timed frame redrew enough of the window to judge the
+    /// quality step by.
+    large: bool,
 }
 
 struct Targets {
@@ -550,6 +694,12 @@ struct Targets {
     scene: wgpu::Texture,
     scene_view: wgpu::TextureView,
     present_group: wgpu::BindGroup,
+    /// The inside of large blurred glass, at half resolution. Glass of one
+    /// pass never overlaps, and each pass draws its own before it is read, so
+    /// every pass shares it.
+    half_view: wgpu::TextureView,
+    /// `half_view` bound as an image of the shape pipeline.
+    half_group: wgpu::BindGroup,
     /// The backdrop of each pass with glass, by pass.
     levels: Vec<Option<Level>>,
 }
@@ -601,6 +751,7 @@ pub struct Renderer {
     queue: wgpu::Queue,
     shape_pipe: wgpu::RenderPipeline,
     glass_pipe: wgpu::RenderPipeline,
+    half_pipe: wgpu::RenderPipeline,
     blur_pipe: wgpu::RenderPipeline,
     present_pipe: wgpu::RenderPipeline,
     stats_pipe: wgpu::ComputePipeline,
@@ -634,6 +785,20 @@ pub struct Renderer {
     grid: Grid,
     damage: Damage,
     full_redraw: bool,
+    /// Draws the inside of large blurred glass at half resolution.
+    half: bool,
+    /// The quality asked for, and the automatic step.
+    quality: Quality,
+    auto: AutoQuality,
+    /// The glass of the frame with the insides chosen for half resolution.
+    glass_scratch: Vec<GlassInst>,
+    /// For each glass element, the shape that composites its inside, or
+    /// `u32::MAX`.
+    half_shapes: Vec<u32>,
+    /// Lists of the last frame, kept so a frame allocates nothing.
+    plan: Plan,
+    scratch: Scratch,
+    stats_out: Vec<(u64, f32, f32)>,
     pub frame_stats: FrameStats,
 }
 
@@ -736,7 +901,7 @@ impl Renderer {
         let pipe = |label: &str,
                     layout: &wgpu::PipelineLayout,
                     m: &wgpu::ShaderModule,
-                    fs: &str,
+                    (vs, fs): (&str, &str),
                     topo,
                     format,
                     blend,
@@ -746,7 +911,7 @@ impl Renderer {
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: m,
-                    entry_point: Some("vs"),
+                    entry_point: Some(vs),
                     compilation_options: Default::default(),
                     buffers: &[],
                 },
@@ -760,7 +925,12 @@ impl Renderer {
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
                         blend,
-                        write_mask: wgpu::ColorWrites::COLOR,
+                        // The scene keeps no alpha; the half target needs it.
+                        write_mask: if format == HALF_FORMAT {
+                            wgpu::ColorWrites::ALL
+                        } else {
+                            wgpu::ColorWrites::COLOR
+                        },
                     })],
                 }),
                 multiview_mask: None,
@@ -772,18 +942,38 @@ impl Renderer {
             "shape",
             &pipe_layout(&[Some(&shape_layout), Some(&atlas_layout), Some(&image_layout)]),
             &shape_mod,
-            "fs",
+            ("vs", "fs"),
             TriangleStrip,
             SCENE_FORMAT,
             Some(premultiplied),
             &[],
         );
         let glass_pl = pipe_layout(&[Some(&glass_layout), Some(&backdrop_layout)]);
-        let glass_pipe =
-            pipe("glass", &glass_pl, &glass_mod, "fs", TriangleStrip, SCENE_FORMAT, Some(premultiplied), &[]);
+        let glass_pipe = pipe(
+            "glass",
+            &glass_pl,
+            &glass_mod,
+            ("vs", "fs"),
+            TriangleStrip,
+            SCENE_FORMAT,
+            Some(premultiplied),
+            &[],
+        );
+        let half_pipe = pipe(
+            "glass half",
+            &glass_pl,
+            &glass_mod,
+            ("vs_half", "fs_half"),
+            TriangleStrip,
+            HALF_FORMAT,
+            None,
+            &[],
+        );
         let blur_pl = pipe_layout(&[Some(&blur_layout)]);
-        let blur_pipe = pipe("blur", &blur_pl, &blur_mod, "fs", TriangleList, SCENE_FORMAT, None, &[]);
-        let present_pipe = pipe("present", &blur_pl, &blur_mod, "present", TriangleList, output, None, &[]);
+        let blur_pipe =
+            pipe("blur", &blur_pl, &blur_mod, ("vs", "fs"), TriangleList, SCENE_FORMAT, None, &[]);
+        let present_pipe =
+            pipe("present", &blur_pl, &blur_mod, ("vs", "present"), TriangleList, output, None, &[]);
         let stats_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("stats"),
             layout: Some(&pipe_layout(&[Some(&stats_layout)])),
@@ -859,6 +1049,7 @@ impl Renderer {
             read: buffer("timing read", 16, U::COPY_DST | U::MAP_READ),
             state: Arc::new(AtomicU8::new(0)),
             period: queue.get_timestamp_period(),
+            large: false,
         });
 
         let mut r = Self {
@@ -866,6 +1057,7 @@ impl Renderer {
             queue,
             shape_pipe,
             glass_pipe,
+            half_pipe,
             blur_pipe,
             present_pipe,
             stats_pipe,
@@ -899,6 +1091,14 @@ impl Renderer {
             grid: Grid::default(),
             damage: Damage::default(),
             full_redraw: std::env::var_os("RUST_GLASS_FULL_REDRAW").is_some_and(|v| v != "0"),
+            half: !std::env::var_os("RUST_GLASS_NO_HALF").is_some_and(|v| v != "0"),
+            glass_scratch: Vec::new(),
+            half_shapes: Vec::new(),
+            plan: Plan::default(),
+            scratch: Scratch::default(),
+            stats_out: Vec::new(),
+            quality: Quality::Auto,
+            auto: AutoQuality::default(),
             frame_stats: FrameStats::default(),
         };
         r.add_image(1, 1, &[255; 4]);
@@ -1087,10 +1287,37 @@ impl Renderer {
         });
         let scene_view = scene.create_view(&Default::default());
         let present_group = self.blur_group(&scene_view);
+        let half = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("half"),
+            size: wgpu::Extent3d { width: tex.0 / 2, height: tex.1 / 2, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HALF_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let half_view = half.create_view(&Default::default());
+        let half_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("half"),
+            layout: &self.image_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&half_view),
+            }],
+        });
         // New textures hold nothing yet.
         self.damage.valid = false;
-        self.targets =
-            Some(Targets { size: (w, h), tex, scene, scene_view, present_group, levels: Vec::new() });
+        self.targets = Some(Targets {
+            size: (w, h),
+            tex,
+            scene,
+            scene_view,
+            present_group,
+            half_view,
+            half_group,
+            levels: Vec::new(),
+        });
     }
 
     fn blur_group(&self, view: &wgpu::TextureView) -> wgpu::BindGroup {
@@ -1177,15 +1404,38 @@ impl Renderer {
     /// it overlaps. Glass additionally needs a pass after the content it covers,
     /// so that content is part of its capture. Overlap is tracked on a coarse
     /// tile grid, which keeps planning linear in the painted area.
+    #[cfg(test)]
     fn plan(data: &DrawData, screen: Px, grid: &mut Grid) -> Plan {
-        grid.reset(screen);
         let mut plan = Plan::default();
-        let mut work: Vec<Work> = vec![Work::default()];
-        let grow = |n: usize, work: &mut Vec<Work>| {
-            while work.len() <= n {
-                work.push(Work::default());
+        Self::plan_into(data, screen, grid, &mut plan);
+        plan
+    }
+
+    /// Plans into `plan`, reusing what it holds from the last frame.
+    fn plan_into(data: &DrawData, screen: Px, grid: &mut Grid, plan: &mut Plan) {
+        grid.reset(screen);
+        let Plan { passes, shapes, pass_shapes, spare } = plan;
+        for mut p in passes.drain(..) {
+            p.items.clear();
+            p.glass.clear();
+            spare.push(p);
+        }
+        shapes.clear();
+        for s in pass_shapes.iter_mut() {
+            s.clear();
+        }
+        let grow = |n: usize,
+                    passes: &mut Vec<Pass>,
+                    spare: &mut Vec<Pass>,
+                    pass_shapes: &mut Vec<Vec<ShapeInst>>| {
+            while passes.len() <= n {
+                passes.push(spare.pop().unwrap_or_default());
+            }
+            while pass_shapes.len() <= n {
+                pass_shapes.push(Vec::new());
             }
         };
+        grow(0, passes, spare, pass_shapes);
         for cmd in &data.cmds {
             match *cmd {
                 Cmd::Shapes { start, end, image } => {
@@ -1197,13 +1447,14 @@ impl Renderer {
                         let (drawn, shade) = grid.query(&r);
                         let level = drawn.saturating_sub(1).max(shade);
                         grid.mark(&r, level + 1);
-                        grow(level as usize, &mut work);
-                        let w = &mut work[level as usize];
-                        let at = w.shapes.len() as u32;
-                        w.shapes.push(*s);
-                        match w.pass.items.last_mut() {
+                        grow(level as usize, passes, spare, pass_shapes);
+                        let list = &mut pass_shapes[level as usize];
+                        let at = list.len() as u32;
+                        list.push(*s);
+                        let pass = &mut passes[level as usize];
+                        match pass.items.last_mut() {
                             Some(Item::Shapes { end, image: im, .. }) if *im == image => *end = at + 1,
-                            _ => w.pass.items.push(Item::Shapes { start: at, end: at + 1, image }),
+                            _ => pass.items.push(Item::Shapes { start: at, end: at + 1, image }),
                         }
                     }
                 }
@@ -1223,34 +1474,33 @@ impl Renderer {
                     sh.y1 += g.shadow_y;
                     grid.shade(&sh.intersect(&clip), level);
                     grid.mark(&b, level + 1);
-                    grow(level as usize, &mut work);
-                    let w = &mut work[level as usize];
-                    w.pass.items.push(Item::Glass(index));
+                    grow(level as usize, passes, spare, pass_shapes);
+                    let pass = &mut passes[level as usize];
+                    pass.items.push(Item::Glass(index));
                     let (lod, reach) = glass_reach(g, &b, probe != u32::MAX, data.ppp);
                     let reads = b.grow(reach).intersect(&screen);
                     let first = first_level(g, data.probes.get(probe as usize).map(|p| p.1));
-                    w.pass.glass.push(GlassUse { index, probe, drawn, reads, lod, first });
+                    pass.glass.push(GlassUse { index, probe, drawn, reads, lod, first });
                 }
             }
         }
-        for mut w in work {
-            let base = plan.shapes.len() as u32;
-            plan.shapes.append(&mut w.shapes);
-            for i in &mut w.pass.items {
+        for (pass, list) in passes.iter_mut().zip(pass_shapes.iter()) {
+            let base = shapes.len() as u32;
+            shapes.extend_from_slice(list);
+            for i in &mut pass.items {
                 if let Item::Shapes { start, end, .. } = i {
                     *start += base;
                     *end += base;
                 }
             }
-            plan.passes.push(w.pass);
         }
-        plan
     }
 
     /// Collect finished backdrop measurements: (key, mean, deviation).
-    pub fn poll_stats(&mut self) -> Vec<(u64, f32, f32)> {
+    pub fn poll_stats(&mut self) -> &[(u64, f32, f32)] {
         let _ = self.device.poll(wgpu::PollType::Poll);
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.stats_out);
+        out.clear();
         for r in &mut self.readbacks {
             match r.state.load(Ordering::Acquire) {
                 2 => {
@@ -1274,11 +1524,17 @@ impl Renderer {
                 let s = &mut self.frame_stats.gpu_ms;
                 *s = Some(s.map_or(ms, |old| old * 0.9 + ms * 0.1));
                 self.frame_stats.gpu_ms_last = Some(ms);
+                // A frame that redrew a small part says little about the rest.
+                if self.quality == Quality::Auto && t.large && self.auto.feed(ms) {
+                    self.damage.valid = false;
+                    log::debug!("quality step {} after a frame of {ms:.1} ms", self.auto.step);
+                }
             }
             t.read.unmap();
             t.state.store(0, Ordering::Release);
         }
-        out
+        self.stats_out = out;
+        &self.stats_out
     }
 
     /// Draws every frame in full when `on`, as `RUST_GLASS_FULL_REDRAW=1`
@@ -1288,32 +1544,60 @@ impl Renderer {
     }
 
     /// Measurements are still in flight.
+    /// Draws the inside of large blurred glass at half resolution when `on`,
+    /// the default.
+    pub fn set_half_resolution(&mut self, on: bool) {
+        if self.half != on {
+            self.half = on;
+            self.damage.valid = false;
+        }
+    }
+
+    /// Sets how far glass may be simplified to keep up.
+    pub fn set_quality(&mut self, quality: Quality) {
+        if self.quality != quality {
+            if self.quality.step() != quality.step() || quality == Quality::Auto {
+                self.damage.valid = false;
+            }
+            self.quality = quality;
+            self.auto = AutoQuality::default();
+        }
+    }
+
+    /// The quality step in use: 0 full, 1 reduced, 2 low.
+    fn quality_step(&self) -> u32 {
+        if self.quality == Quality::Auto { self.auto.step } else { self.quality.step() }
+    }
+
     pub fn stats_pending(&self) -> bool {
         self.readbacks.iter().any(|r| r.state.load(Ordering::Acquire) != 0)
     }
 
     pub fn render(&mut self, data: &DrawData, target: &wgpu::TextureView, w: u32, h: u32) {
+        self.set_quality(data.quality);
         self.ensure_targets(w, h);
         let (dev, q) = (self.device.clone(), self.queue.clone());
         let tex = self.targets.as_ref().unwrap().tex;
         let screen = Px { x0: 0.0, y0: 0.0, x1: tex.0 as f32, y1: tex.1 as f32 };
         let mut grid = std::mem::take(&mut self.grid);
-        let mut plan = Self::plan(data, screen, &mut grid);
+        let mut plan = std::mem::take(&mut self.plan);
+        Self::plan_into(data, screen, &mut grid, &mut plan);
         self.grid = grid;
         // Backdrops for the passes with glass. A new one makes the frame full.
-        let with_glass: Vec<usize> =
-            plan.passes.iter().enumerate().filter(|(_, p)| !p.glass.is_empty()).map(|(i, _)| i).collect();
-        for pi in with_glass {
-            self.ensure_level(pi);
+        for (pi, pass) in plan.passes.iter().enumerate() {
+            if !pass.glass.is_empty() {
+                self.ensure_level(pi);
+            }
         }
         if self.full_redraw {
             self.damage.valid = false;
         }
-        let found = self.damage.find(data, &plan, screen);
-        let (area, dirty) = match found {
-            Some(f) => (f.area, f.dirty),
-            None => (Px { x0: 0.0, y0: 0.0, x1: 0.0, y1: 0.0 }, Vec::new()),
+        let area = match self.damage.find(data, &plan, screen) {
+            Some(f) => f.area,
+            None => Px { x0: 0.0, y0: 0.0, x1: 0.0, y1: 0.0 },
         };
+        let dirty = std::mem::take(&mut self.damage.dirty);
+        let mut sc = std::mem::take(&mut self.scratch);
         let nothing = area.empty();
         let whole =
             !nothing && area.x0 <= 0.0 && area.y0 <= 0.0 && area.x1 >= screen.x1 && area.y1 >= screen.y1;
@@ -1339,15 +1623,61 @@ impl Renderer {
             plan.shapes.len() as u32 - 1
         });
 
+        // The insides drawn at half resolution, each composited by a shape.
+        let mut glasses = std::mem::take(&mut self.glass_scratch);
+        glasses.clear();
+        glasses.extend_from_slice(&data.glasses);
+        let mut half_shapes = std::mem::take(&mut self.half_shapes);
+        half_shapes.clear();
+        half_shapes.resize(glasses.len(), u32::MAX);
+        // Below full quality glass casts no shadow, so each element covers
+        // only its body. On integrated GPUs glass costs by the pixels it
+        // covers more than by its math.
+        if self.quality_step() >= 1 {
+            for g in glasses.iter_mut() {
+                if g.shadow > 0.0 {
+                    let body = glass_body(data, g).grow(2.0 + g.fuse * 0.3);
+                    let b = Px::new(g.bounds).intersect(&body);
+                    g.bounds = [b.x0, b.y0, b.x1, b.y1];
+                    g.shadow = 0.0;
+                }
+            }
+        }
+        for p in &plan.passes {
+            for u in &p.glass {
+                let g = &mut glasses[u.index as usize];
+                let Some(r) = self.half.then(|| interior(data, g, data.ppp)).flatten() else { continue };
+                g.interior = [r.x0, r.y0, r.x1, r.y1];
+                half_shapes[u.index as usize] = plan.shapes.len() as u32;
+                plan.shapes.push(ShapeInst {
+                    rect: [r.x0, r.y0, r.x1, r.y1],
+                    uv: [r.x0 / screen.x1, r.y0 / screen.y1, r.x1 / screen.x1, r.y1 / screen.y1],
+                    color: [1.0; 4],
+                    color2: [1.0; 4],
+                    radius: [0.0; 2],
+                    stroke: 0.0,
+                    soft: 0.0,
+                    clip: g.clip,
+                    kind: HALF_SHAPE,
+                    mask: g.mask,
+                    power: 2.0,
+                    pad: 0.0,
+                });
+            }
+        }
+
         // What each pass captures: the reads of its glass that reads again,
         // with the measurements of that glass.
-        let mut captures: Vec<Vec<Capture>> = Vec::with_capacity(plan.passes.len());
-        let mut lods = Vec::with_capacity(plan.passes.len());
-        let mut probe_list: Vec<u32> = Vec::new();
-        let mut probe_ranges = Vec::with_capacity(plan.passes.len());
+        sc.captures.clear();
+        sc.capture_ranges.clear();
+        sc.lods.clear();
+        sc.probe_list.clear();
+        sc.probe_ranges.clear();
+        let Scratch { captures, capture_ranges, caps, lods, probe_list, probe_ranges, rects, infos, copied } =
+            &mut sc;
         let mut gi = 0;
         for p in &plan.passes {
-            let mut caps = Vec::new();
+            caps.clear();
             let mut lod = 0;
             let first = probe_list.len() as u32;
             for u in &p.glass {
@@ -1356,13 +1686,15 @@ impl Renderer {
                 if !again || nothing {
                     continue;
                 }
-                add_capture(&mut caps, Capture { rect: u.reads.intersect(&area), first: u.first.min(u.lod) });
+                add_capture(caps, Capture { rect: u.reads.intersect(&area), first: u.first.min(u.lod) });
                 lod = lod.max(u.lod);
                 if u.probe != u32::MAX && probe_list.len() < MAX_PROBES as usize {
                     probe_list.push(u.probe);
                 }
             }
-            captures.push(caps);
+            let start = captures.len();
+            captures.extend_from_slice(caps);
+            capture_ranges.push(start..captures.len());
             lods.push(lod);
             probe_ranges.push(first..probe_list.len() as u32);
         }
@@ -1378,10 +1710,7 @@ impl Renderer {
                 &[&self.shapes],
             );
         }
-        if self.glasses.write(&dev, &q, &data.glasses)
-            | self.gshapes.write(&dev, &q, &data.gshapes)
-            | masks_new
-        {
+        if self.glasses.write(&dev, &q, &glasses) | self.gshapes.write(&dev, &q, &data.gshapes) | masks_new {
             self.glass_group = Self::group4(
                 &dev,
                 &self.glass_layout,
@@ -1403,23 +1732,27 @@ impl Renderer {
                 light: data.light,
                 time: data.time,
                 ppp: data.ppp,
+                quality: self.quality_step() as f32,
+                pad: [0.0; 3],
             }),
         );
         let n_probes = probe_list.len();
         if n_probes > 0 {
-            let rects: Vec<[f32; 4]> = probe_list.iter().map(|p| data.probes[*p as usize].1).collect();
-            q.write_buffer(&self.probes, 0, bytemuck::cast_slice(&rects));
+            rects.clear();
+            rects.extend(probe_list.iter().map(|p| data.probes[*p as usize].1));
+            q.write_buffer(&self.probes, 0, bytemuck::cast_slice(rects));
         }
 
         let passes = if nothing { &[][..] } else { &plan.passes[..] };
-        let mut infos = vec![0u8; passes.len().min(MAX_PASSES as usize) * INFO_STRIDE as usize];
+        infos.clear();
+        infos.resize(passes.len().min(MAX_PASSES as usize) * INFO_STRIDE as usize, 0);
         for (i, r) in probe_ranges.iter().take(passes.len().min(MAX_PASSES as usize)).enumerate() {
             let info = StatInfo { tex_size, size, first: r.start, pad: [0; 3] };
             let at = i * INFO_STRIDE as usize;
             infos[at..at + std::mem::size_of::<StatInfo>()].copy_from_slice(bytemuck::bytes_of(&info));
         }
         if !infos.is_empty() {
-            q.write_buffer(&self.infos, 0, &infos);
+            q.write_buffer(&self.infos, 0, infos);
         }
 
         let mut enc = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
@@ -1432,6 +1765,7 @@ impl Renderer {
             gpu_ms_last: self.frame_stats.gpu_ms_last,
             captured_px: 0,
             redrawn_px: if nothing { 0 } else { area.area() as u64 },
+            quality: Quality::from_step(self.quality_step()),
         };
         // Everything is drawn inside the changed area only.
         let scissor = {
@@ -1444,9 +1778,9 @@ impl Renderer {
 
         for (pi, p) in passes.iter().enumerate() {
             let level = t.levels.get(pi).and_then(Option::as_ref);
-            let mut copied = Vec::with_capacity(captures[pi].len());
+            copied.clear();
             if let Some(lv) = level {
-                for cap in &captures[pi] {
+                for cap in &captures[capture_ranges[pi].clone()] {
                     let c = cap.rect;
                     let align = |v: f32| (v.max(0.0) as u32) / PAD * PAD;
                     let x0 = align(c.x0).min(t.tex.0);
@@ -1491,7 +1825,7 @@ impl Renderer {
                         });
                         rp.set_pipeline(&self.blur_pipe);
                         let mut from_scene = None;
-                        for &(x0, y0, x1, y1, first) in &copied {
+                        for &(x0, y0, x1, y1, first) in copied.iter() {
                             // A capture without the full size copy reads the
                             // scene for its first level.
                             let scene = lod == 1 && first == 1;
@@ -1516,6 +1850,39 @@ impl Renderer {
                         cp.set_pipeline(&self.stats_pipe);
                         cp.set_bind_group(0, &lv.stats_group, &[(pi as u64 * INFO_STRIDE) as u32]);
                         cp.dispatch_workgroups(probes.len() as u32, 1, 1);
+                    }
+                }
+            }
+            // The insides of this pass at half resolution, inside the changed
+            // area grown by the reach of the filter that scales them up.
+            let halves = level.is_some() && p.glass.iter().any(|u| half_shapes[u.index as usize] != u32::MAX);
+            if halves {
+                let (hw, hh) = (t.tex.0 / 2, t.tex.1 / 2);
+                let x0 = ((area.x0 - 6.0).max(0.0) as u32 / 2).min(hw);
+                let y0 = ((area.y0 - 6.0).max(0.0) as u32 / 2).min(hh);
+                let x1 = ((area.x1 + 6.0).max(0.0) as u32).div_ceil(2).min(hw);
+                let y1 = ((area.y1 + 6.0).max(0.0) as u32).div_ceil(2).min(hh);
+                if x1 > x0 && y1 > y0 {
+                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("half"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &t.half_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        })],
+                        ..Default::default()
+                    });
+                    rp.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
+                    rp.set_pipeline(&self.half_pipe);
+                    rp.set_bind_group(0, &self.glass_group, &[]);
+                    if let Some(lv) = level {
+                        rp.set_bind_group(1, &lv.glass_group, &[]);
+                    }
+                    for u in &p.glass {
+                        if half_shapes[u.index as usize] != u32::MAX {
+                            rp.draw(0..4, u.index..u.index + 1);
+                        }
                     }
                 }
             }
@@ -1577,13 +1944,24 @@ impl Renderer {
                         if vis.empty() {
                             continue;
                         }
+                        let half = half_shapes[index as usize];
+                        if half != u32::MAX {
+                            if mode != 1 {
+                                rp.set_pipeline(&self.shape_pipe);
+                                rp.set_bind_group(0, &self.shape_group, &[]);
+                                rp.set_bind_group(1, &self.atlas_group, &[]);
+                            }
+                            rp.set_bind_group(2, &t.half_group, &[]);
+                            rp.draw(0..4, half..half + 1);
+                            mode = 1;
+                        }
                         if mode != 2 {
                             mode = 2;
                             rp.set_pipeline(&self.glass_pipe);
                             rp.set_bind_group(0, &self.glass_group, &[]);
                             rp.set_bind_group(1, &lv.glass_group, &[]);
                         }
-                        rp.draw(0..4, index..index + 1);
+                        rp.draw(0..10, index..index + 1);
                     }
                 }
             }
@@ -1636,13 +2014,20 @@ impl Renderer {
         };
         if let Some(i) = slot {
             let r = &mut self.readbacks[i];
-            r.keys = probe_list.iter().map(|p| data.probes[*p as usize].0).collect();
+            r.keys.clear();
+            r.keys.extend(probe_list.iter().map(|p| data.probes[*p as usize].0));
             arm(&r.buffer, &r.state);
         }
-        if timed && let Some(tm) = &self.timing {
+        if timed && let Some(tm) = &mut self.timing {
+            tm.large = area.area() >= screen.area() * 0.25;
             arm(&tm.read, &tm.state);
         }
         self.frame_stats = fs;
+        self.glass_scratch = glasses;
+        self.half_shapes = half_shapes;
+        self.plan = plan;
+        self.scratch = sc;
+        self.damage.dirty = dirty;
     }
 }
 
@@ -1688,6 +2073,54 @@ mod tests {
     }
 
     const SCREEN: Px = Px { x0: 0.0, y0: 0.0, x1: 400.0, y1: 400.0 };
+
+    #[test]
+    fn only_large_blurred_glass_has_an_inside_at_half_resolution() {
+        let mut d = DrawData { ppp: 1.0, ..Default::default() };
+        glass_at(&mut d, 200.0, false);
+        let sized = |d: &mut DrawData, half: f32, blur: f32| {
+            d.gshapes[0].half = [half, half];
+            d.gshapes[0].radius = [12.0, 12.0];
+            d.glasses[0].blur = blur;
+            d.glasses[0].opacity = 1.0;
+            d.glasses[0].inner_height = 10.0;
+            d.glasses[0].rim_width = 1.0;
+        };
+        sized(&mut d, 150.0, 10.0);
+        let r = interior(&d, &d.glasses[0], 1.0).expect("a large blurred panel has an inside");
+        // Whole pixels, inside the body by the curved edge and the rim.
+        assert_eq!(r.x0, r.x0.round());
+        assert!(r.x0 >= 50.0 + 10.0 + 8.0 && r.x1 <= 350.0 - 18.0, "{r:?}");
+        // Clear glass shows sharp content through its middle.
+        sized(&mut d, 150.0, 1.0);
+        assert!(interior(&d, &d.glasses[0], 1.0).is_none());
+        // A button is too small to gain from it.
+        sized(&mut d, 30.0, 10.0);
+        assert!(interior(&d, &d.glasses[0], 1.0).is_none());
+    }
+
+    #[test]
+    fn automatic_quality_steps_down_on_slow_frames_and_back_up_with_room() {
+        let mut q = AutoQuality::default();
+        let over = Quality::AUTO_BUDGET_MS + 4.0;
+        // One slow frame is not enough.
+        assert!(!q.feed(over) && !q.feed(over));
+        assert!(q.feed(over));
+        assert_eq!(q.step, 1);
+        // A frame within the budget restarts the count.
+        q.feed(over);
+        q.feed(over);
+        q.feed(Quality::AUTO_BUDGET_MS - 1.0);
+        assert!(!q.feed(over));
+        // Frames with little room keep the step; plenty of room brings it back.
+        for _ in 0..500 {
+            q.feed(Quality::AUTO_BUDGET_MS * 0.8);
+        }
+        assert_eq!(q.step, 1);
+        let fast = Quality::AUTO_BUDGET_MS * 0.3;
+        let ups = (0..AUTO_UNDER).filter(|_| q.feed(fast)).count();
+        assert_eq!((ups, q.step), (1, 0));
+    }
 
     fn plan(d: &DrawData) -> Plan {
         Renderer::plan(d, SCREEN, &mut Grid::default())
@@ -1777,6 +2210,12 @@ mod tests {
         assert_eq!(caps.len(), 2);
     }
 
+    /// What [`Damage::find`] found, with the glass that reads again.
+    struct Seen {
+        area: Px,
+        dirty: Vec<bool>,
+    }
+
     #[test]
     fn damage_covers_what_changed_and_the_glass_that_sees_it() {
         let screen = Px { x0: 0.0, y0: 0.0, x1: 1024.0, y1: 512.0 };
@@ -1787,8 +2226,10 @@ mod tests {
             d
         };
         let mut damage = Damage::default();
-        let mut find =
-            |d: &DrawData| damage.find(d, &Renderer::plan(d, screen, &mut Grid::default()), screen);
+        let mut find = |d: &DrawData| {
+            let found = damage.find(d, &Renderer::plan(d, screen, &mut Grid::default()), screen);
+            found.map(|f| Seen { area: f.area, dirty: damage.dirty.clone() })
+        };
         // The first frame is drawn in full.
         let first = find(&frame(100.0)).unwrap();
         assert_eq!(first.area.area(), screen.area());
@@ -1819,8 +2260,10 @@ mod tests {
             d
         };
         let mut damage = Damage::default();
-        let mut find =
-            |d: &DrawData| damage.find(d, &Renderer::plan(d, screen, &mut Grid::default()), screen);
+        let mut find = |d: &DrawData| {
+            let found = damage.find(d, &Renderer::plan(d, screen, &mut Grid::default()), screen);
+            found.map(|f| Seen { area: f.area, dirty: damage.dirty.clone() })
+        };
         find(&frame(0.0));
         let changed = find(&frame(1.0)).unwrap();
         assert_eq!(changed.dirty, [false]);

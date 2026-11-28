@@ -6,6 +6,7 @@ struct Globals {
     light: vec2f,       // unit vector pointing towards the light
     time: f32,
     ppp: f32,           // physical pixels per point
+    quality: f32,       // 0 full, 1 reduced, 2 low
 };
 
 struct Mask {

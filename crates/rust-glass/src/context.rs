@@ -272,6 +272,10 @@ pub struct Context {
     pub pixels_per_point: f32,
     /// Color behind everything.
     pub clear_color: Color,
+    /// How far glass may be simplified to keep up with the display. Windows
+    /// start with [`Quality::Auto`](crate::Quality::Auto), which steps down
+    /// only on a GPU that cannot keep up.
+    pub quality: crate::Quality,
     /// Mouse cursor for this frame. Widgets set it while hovered.
     pub cursor: Cursor,
     /// Requests to the window host, handled after the frame.
@@ -361,6 +365,7 @@ impl Context {
             screen: Rect::default(),
             pixels_per_point: 1.0,
             clear_color: Color::gray(0.85),
+            quality: crate::Quality::Auto,
             cursor: Cursor::Default,
             host_commands: Vec::new(),
             uploads: Vec::new(),
@@ -555,6 +560,7 @@ impl Context {
         d.light = [a.sin(), -a.cos()];
         d.time = self.time as f32;
         d.ppp = self.pixels_per_point;
+        d.quality = self.quality;
         if self.input.pending() || self.text.needs_rebuild() {
             self.repaint = true;
         }
@@ -692,7 +698,22 @@ impl Context {
     /// Stores state for `id`. State that is not used for a while is dropped,
     /// see [`Self::set_retention`].
     pub fn set<T: 'static>(&mut self, id: Id, value: T) {
-        self.states.insert((id, TypeId::of::<T>()), (Box::new(value), self.frame, self.time));
+        let (f, now) = (self.frame, self.time);
+        // Overwrite the stored value in place, so state kept from frame to
+        // frame costs no allocation.
+        match self.states.entry((id, TypeId::of::<T>())) {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let (b, used, at) = e.get_mut();
+                match b.downcast_mut::<T>() {
+                    Some(v) => *v = value,
+                    None => *b = Box::new(value),
+                }
+                (*used, *at) = (f, now);
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert((Box::new(value), f, now));
+            }
+        }
     }
 
     /// Moves a value stored under `id` towards `target` on a spring and returns

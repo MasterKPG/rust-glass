@@ -8,7 +8,10 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] Try the accessibility tree with VoiceOver on macOS (needs a Mac)
 - [ ] Try the accessibility tree with Orca on Linux (needs a Linux desktop)
 - [ ] Touch gestures with momentum
-- [ ] The first frames of a full page blur cost about 24 ms on Intel UHD while the GPU clocks up from idle (album view). The sharp copy is gone (about 7.0 to 6.7 ms per frame at full clock); next, draw large blurred glass at half resolution and scale it up
+- [ ] The first frames of a full page blur cost about 24 ms on Intel UHD while the GPU clocks up from idle (album view). The sharp copy is gone and the inside is drawn at half resolution; what is left is the clock
+- [ ] At 4K on Intel UHD a render pass over the scene costs about 7 ms even when it draws nothing (Vulkan and DirectX 12 alike), likely the driver resolving a compressed target at the low clock of the bench. Try fewer scene passes, or a scene texture without compression
+- [ ] Partial frames differ from full redraws by 1 or 2 steps of 8 bit color on a few thousand pixels of some pages (Buttons, Segments, Text Fields, Menus, Feedback, Windows); it was already so before v0.4. Find the pass that reads differently
+- [ ] `Glass::shapes` is a `Vec`, so every glass element allocates once per frame; an inline list for one or two shapes would avoid it (breaking change)
 - [ ] Check after a few pushes whether the frame budget on the macOS runner is steady enough at 15 percent, or needs a third run per side
 
 ### Glass Studio: export settings as Rust
@@ -42,8 +45,7 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 
 ### Speed
 - [ ] Several damage rectangles instead of one, for two things that animate far apart
-- [ ] Automatic quality step on slow GPUs: fewer blur taps and no dispersion when frames run over budget
-- [ ] No allocation per frame in layout, reorder and text paths
+- [ ] The Lists & Drag page allocates about 960 times per frame against about 330 elsewhere: find what its rows allocate
 
 ## Backlog
 - [ ] Drag and drop between windows and to other apps
@@ -52,6 +54,8 @@ Short-term work. The long-term plan is in [ROADMAP.md](ROADMAP.md).
 - [ ] egui integration (the approach is in the roadmap)
 
 ## Done (recent)
+- [x] v0.4 speed work (2026-11-28): the inside of large blurred glass drawn at half resolution (4 percent faster pages at 4K, album and sheet transitions 5 to 11 percent, same picture within one step of 8 bit color); `Quality` with an automatic step that drops glass shadows first (12 to 16 percent at 4K, a fifth of a menu or sheet opening); renderer lists and widget state reused from frame to frame (about 450 allocations per frame down to about 330, the rest inside wgpu), with the count in the frame budget
+- [x] Fixes (2026-11-28): caret after a new line in multi-line fields, segmented selection centered at every scale, dark glass edges without a light band, a tighter tab bar blob checked against the iOS 27 clips
 - [x] Speed pass (2026-11-27): frame budget per page and per interaction, checked in CI against the commit before; blurred glass skips the sharp copy (captures down about 70 percent); springs stop once their motion no longer shows (a switch rests after 61 frames instead of 153). Shader variants without the lens were measured and dropped: the branches are the same across a draw, so they cost nothing to skip
 - [x] Tweaks pass against iOS 27 footage (2026-11-27): tab bar blob refraction, rainbow edge, size and settle; resting selection shade; soft glass edge; press glow; `Material::liquidity` in the Material Lab; drops that land where they were let go; album view that opened only when the pointer moved
 - [x] Field report from building EqualizeR (2026-11-26): damage tracking with backdrops kept per pass, timed repaints and a waker, hidden drawing for warm pages, press to select in sidebars, unsmoothed and peak frame timings with a trace file, time-based cache retention, a growing glyph atlas, scroll area column and bar options, no panic in short scroll areas, window options for icon, start hidden, title bar and close

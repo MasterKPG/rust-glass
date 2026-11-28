@@ -9,7 +9,8 @@
 //! `--capture DIR` renders every page to PNG without a window and prints
 //! timings. `--preview DIR` renders the pictures and clips of the preview
 //! folder. `--motion DIR` renders drops, presses and the album view frame by
-//! frame. `--bench FILE` writes the frame budget, and `--compare BASE HEAD`
+//! frame. `--quality full|reduced|low` renders them at that quality step.
+//! `--bench FILE` writes the frame budget, and `--compare BASE HEAD`
 //! fails when HEAD is more than 15 percent over the budget of BASE.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -174,12 +175,52 @@ impl App for Showcase {
     }
 }
 
+/// Counts heap allocations, for the frame budget.
+struct Counting;
+
+static ALLOCATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+// SAFETY: every call goes to the system allocator unchanged.
+unsafe impl std::alloc::GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: same contract as the caller's.
+        unsafe { std::alloc::System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        // SAFETY: same contract as the caller's.
+        unsafe { std::alloc::System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: same contract as the caller's.
+        unsafe { std::alloc::System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
+
+/// Heap allocations and reallocations since the start.
+pub(crate) fn allocations() -> u64 {
+    ALLOCATIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let folder = |flag: &str| {
         let i = args.iter().position(|a| a == flag)?;
         Some(args.get(i + 1).cloned().unwrap_or_else(|| "captures".into()))
     };
+    if let Some(q) = folder("--quality") {
+        let q = match q.as_str() {
+            "full" => Quality::Full,
+            "reduced" => Quality::Reduced,
+            "low" => Quality::Low,
+            _ => Quality::Auto,
+        };
+        let _ = capture::QUALITY.set(q);
+    }
     let compare = args.iter().position(|a| a == "--compare").map(|i| (args.get(i + 1), args.get(i + 2)));
     let result = match (folder("--capture"), folder("--preview"), folder("--motion")) {
         _ if compare.is_some() => match compare {

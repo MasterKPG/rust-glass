@@ -18,7 +18,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 use crate::color::Color;
 use crate::context::{Context, Cursor, HostCommand, Waker};
 use crate::geometry::{Rect, vec2};
-pub use crate::gpu::FrameStats;
+pub use crate::gpu::{FrameStats, Quality};
 use crate::gpu::{Gpu, Renderer};
 use crate::input::{Event, Key, Modifiers};
 
@@ -362,7 +362,7 @@ impl<A: App> Host<A> {
         self.wake_at = None;
 
         let stats = live.renderer.poll_stats();
-        self.ctx.apply_stats(&stats);
+        self.ctx.apply_stats(stats);
         let ppp = live.window.scale_factor() as f32;
         let size = vec2(width as f32, height as f32) / ppp;
         let events = std::mem::take(&mut self.events);
@@ -718,7 +718,7 @@ impl<A: App> ApplicationHandler<HostEvent> for Host<A> {
         let mut until = self.wake_at;
         if live.renderer.stats_pending() {
             let stats = live.renderer.poll_stats();
-            if self.ctx.apply_stats(&stats) {
+            if self.ctx.apply_stats(stats) {
                 live.window.request_redraw();
             }
             let soon = now + Duration::from_millis(8);

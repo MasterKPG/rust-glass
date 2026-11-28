@@ -5,10 +5,11 @@
 //! 15 percent slower.
 //!
 //! A file has one value per line: kind, name and value, separated by tabs.
-//! The counts (passes, captured pixels, frames until rest) are the same on
-//! every run and fail at 15 percent. Times change from run to run: the sum of
-//! all pages fails at 15 percent, a single page only at twice that, and the
-//! time of an interaction is shown but never fails.
+//! The counts (passes, captured pixels, heap allocations of a frame, frames
+//! until rest) are the same on every run and fail at 15 percent. Times
+//! change from run to run: the sum of all pages fails at 15 percent, a
+//! single page only at twice that, and the time of an interaction is shown
+//! but never fails.
 
 use std::collections::BTreeMap;
 
@@ -121,6 +122,15 @@ pub fn run(path: &str) -> Result<(), String> {
             .fold(f64::MAX, f64::min);
         let gpu = rig.host.info.gpu;
         rig.host.set_full_redraw(false);
+        // Allocations of a frame that runs the UI and draws the page in full.
+        let before = crate::allocations();
+        rig.host.set_full_redraw(true);
+        rig.host.ctx.request_repaint();
+        rig.step(&[]);
+        rig.host.set_full_redraw(false);
+        let allocs = crate::allocations() - before;
+        sheet.add("allocs", name, allocs as f64);
+        eprintln!("{name:<20} {allocs} allocations");
         sheet.add("page_ms", name, ms);
         sheet.add("passes", name, gpu.passes as f64);
         sheet.add("captured_kpx", name, (gpu.captured_px / 1000) as f64);
@@ -196,6 +206,7 @@ fn slack(kind: &str) -> f64 {
         "frames" => 2.0,
         "still_kpx" | "captured_kpx" => 32.0,
         "shapes" => 8.0,
+        "allocs" => 16.0,
         _ => 0.0,
     }
 }

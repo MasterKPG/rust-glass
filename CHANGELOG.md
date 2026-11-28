@@ -5,6 +5,9 @@ All notable changes are listed here. Format: Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- `Quality` and `Context::quality` set how far glass may be simplified to keep up. Windows start at `Quality::Auto`: after three large frames over 14 ms of GPU time the glass steps down, and it steps back up after 120 frames with plenty of room. `Reduced` drops glass shadows, so glass covers only its body; at 4K on Intel UHD Graphics that makes a page 12 percent faster and opening a menu or a sheet about a fifth faster. `Low` also drops rainbow edges, light spilled onto edges and the bicubic blur filter. `FrameStats::quality` is the step a frame was drawn with. `Headless` draws at `Quality::Full`.
+- `Headless::set_half_resolution` and `RUST_GLASS_NO_HALF=1` draw large blurred glass at full size everywhere, for comparison.
+- The showcase takes `--quality full|reduced|low` for its headless renders, its Material Lab shows the quality step when it is not full, and the frame budget counts the heap allocations of a frame drawn in full.
 - Only the part of the window that changed is drawn again. Each frame is compared with the last on a grid of tiles, and glass keeps the backdrop it captured while nothing under it changed. A still page now costs about 0.4 ms of GPU time instead of 3.5 to 5 ms at 1770 x 1170, and the Feedback page with its spinner 1.5 ms instead of 3.8. `RUST_GLASS_FULL_REDRAW=1` turns it off. Partial frames match full redraws pixel for pixel in every page and gesture of the capture run.
 - `Context::request_repaint_after` asks for a frame later and lets the window sleep until then. `Context::waker` returns a `Waker` that wakes the window from another thread.
 - `Context::hidden` and `Ui::hidden` run UI code without showing it: text is shaped and state kept, but nothing is painted, reacts, takes focus or asks for frames. Use it to prepare a page before it is shown.
@@ -24,11 +27,14 @@ All notable changes are listed here. Format: Keep a Changelog.
 - A frame budget for the showcase: `--bench FILE` times every page drawn in full and counts the passes, captured pixels and frames until rest of nine interactions, and `--compare BASE HEAD` fails when HEAD is more than 15 percent worse. Each push to dev is compared with the commit before it on the macOS runner.
 
 ### Changed
+- The inside of large blurred glass, such as sidebars, sheets and pages that blur as they appear, is shaded at half resolution and scaled up; the edge, where glass bends and catches the light, stays at full size. The picture is the same within one step of 8 bit color. At 4K on Intel UHD Graphics pages draw about 4 percent faster and the album and sheet transitions 5 to 11 percent.
+- Breaking: `FrameStats` has a new field, `quality`, so it can only be built with `..Default::default()`.
+- A frame allocates about a quarter less: the renderer keeps its lists from frame to frame, and widget state stored again for the same id is overwritten in place. A showcase page drawn in full now allocates about 330 times instead of about 450, nearly all of it inside wgpu.
 - Springs stop once the rest of their motion stays within half a step of an 8 bit color, or a hundredth of a point for positions, instead of waiting for their speed to die out. Windows go idle sooner: a switch draws 61 frames after a click instead of 153, a tab bar tap 50 instead of 78, and buttons, menus, sheets, page changes and the album view 2 to 12 percent fewer.
 - Glass blurred by more than about 3.3 pixels no longer copies the sharp scene before it reads it: the first level of its blur is filtered from the scene directly, since the shader never reads the sharp level for it. That covers panels, sheets and toolbars of the regular material. Captured pixels drop by about 70 percent on eight of the eleven showcase pages, and a page drawn in full takes about 5 percent less GPU time (Player 5.4 to 4.4 ms on Intel UHD Graphics at 1770 x 1170). The pictures are the same.
-- The tab bar blob, refitted to iOS 27 footage in light and dark: larger, with a wide refracting edge that pulls the content around it into a rainbow, no outline, a stretch as it lands and no wobble after. It settles in under 0.4 s after a stop instead of about 1 s, and drops back into the selection faster after a tap.
+- The tab bar blob, refitted to iOS 27 footage in light and dark: with a wide refracting edge that pulls the content around it into a rainbow, no outline, a stretch as it lands and no wobble after. Held, it is 112 by 77 points, overhangs the bar by 7.5 points, stretches less and follows the pointer without overshooting the ends of the bar. It settles in under 0.4 s after a stop instead of about 1 s, and drops back into the selection faster after a tap.
 - The selection of the tab bar at rest is a flat shade of the bar as on iOS 27: a little darker on light glass and much darker on dark glass, where it used to be lighter.
-- The edge of glass reads as the surface curving away instead of a drawn line: the rim fades softly into the body, and a band along the edge turns slightly darker on light glass and lighter on dark glass.
+- The edge of glass reads as the surface curving away instead of a drawn line: the rim fades softly into the body, and a band along the edge turns slightly darker on light glass. On dark glass the band no longer lightens, and the soft part of the rim and the light spilled onto the edge are halved, so menus, sidebars and panels keep a fine rim without a glow along their edges.
 - A dropped item flies on from where it was let go with the speed it had, stays lifted until it is over its place, then sets down. Its place stays empty until it lands, so the item is never seen twice or in place early.
 - Widget state and the adaptive state of glass are dropped only after 1200 frames and five minutes without use, and shaped text after 240 frames and 30 seconds. Before, a window that drew all the time lost them within seconds, so a page you came back to paid its first frame again and lost its scroll position.
 - Glass far apart is captured in separate rectangles instead of one that covers both, which halves the copied area on some pages.
@@ -38,6 +44,8 @@ All notable changes are listed here. Format: Keep a Changelog.
 - `Headless::settle` also waits for frames asked for with `request_repaint_after`.
 
 ### Fixed
+- A new line in a multi-line text field put the caret two lines down until the next character was typed: the empty last line was laid out twice.
+- The selection of a segmented control at rest sat a pixel low at some display scales, leaving a hair of the track above it. Its inset is now a whole number of pixels, the same above and below.
 - A click that changes what is shown without starting an animation is drawn at once. The window used to wait for the next input, so the album view of the showcase opened only when the pointer moved.
 - A card dropped in the other list of the showcase lands from where it was let go instead of appearing in place.
 - A scroll area shorter than its scroll bar no longer panics.

@@ -399,7 +399,9 @@ impl TextEngine {
         let mut glyphs = Vec::new();
         let mut lines: Vec<Line> = Vec::new();
         let mut width = 0f32;
+        let mut last_line = None;
         for run in b.layout_runs() {
+            last_line = Some(run.line_i);
             let base = line_start.get(run.line_i).copied().unwrap_or(0);
             let mut stops: Vec<(usize, f32)> = Vec::with_capacity(run.glyphs.len() + 1);
             let (mut start, mut end) = (usize::MAX, 0);
@@ -427,7 +429,9 @@ impl TextEngine {
             width = width.max(last_x - run.glyphs.first().map_or(0.0, |g| g.x / ppp).min(0.0));
             lines.push(Line { top: run.line_top / ppp, height: run.line_height / ppp, start, end, stops });
         }
-        if text.ends_with('\n') {
+        // cosmic-text lays out the empty line after a final newline itself;
+        // add it only when it did not.
+        if text.ends_with('\n') && last_line.is_none_or(|i| i + 1 < line_start.len()) {
             let top = lines.last().map_or(0.0, |l| l.top + l.height);
             lines.push(Line {
                 top,
@@ -549,6 +553,16 @@ mod tests {
         assert_eq!(l.lines.len(), 2);
         assert_eq!(l.caret(3).1, l.lines[1].top);
         assert_eq!(l.hit(vec2(0.0, l.lines[1].top + 1.0)), 3);
+    }
+
+    #[test]
+    fn caret_after_a_final_newline_sits_on_the_next_line() {
+        let mut t = TextEngine::new();
+        let l = t.layout("ab\n", &TextStyle::new(16.0));
+        assert_eq!(l.lines.len(), 2);
+        let typed = t.layout("ab\nc", &TextStyle::new(16.0));
+        assert_eq!(l.caret(3).1, typed.caret(3).1);
+        assert_eq!(l.size.y, typed.size.y);
     }
 
     #[test]

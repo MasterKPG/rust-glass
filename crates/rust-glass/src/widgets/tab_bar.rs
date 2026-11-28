@@ -34,7 +34,7 @@ impl<'a> TabBar<'a> {
         let pitch = 77.0;
         let pill = vec2(86.0, 54.0);
         let pad = 4.0;
-        let blob = vec2(116.0, 82.0);
+        let blob = vec2(112.0, 77.0);
         let size = vec2(pitch * (n - 1) as f32, 0.0) + pill + Vec2::splat(pad * 2.0);
         let bar = Rect::from_center_size(center, size).snap(ctx.pixels_per_point);
         let center = bar.center();
@@ -49,7 +49,7 @@ impl<'a> TabBar<'a> {
         let before = *self.selected;
         *self.selected = before.min(n - 1);
         let mut d = load_thumb(ctx, id);
-        let dragged = drag_target(ctx, id, &r, ox, d.pos.value, at(0), at(n - 1), 14.0);
+        let dragged = drag_target(ctx, id, &r, ox, d.pos.value, at(0), at(n - 1), 10.0);
         let nearest = |x: f32| (((x - at(0)) / pitch).round().max(0.0) as usize).min(n - 1);
         if r.released {
             let p = r.pointer.map_or(d.pos.value, |p| p.x - ox);
@@ -80,7 +80,7 @@ impl<'a> TabBar<'a> {
         }
         let target = dragged.unwrap_or(at(*self.selected));
         let follow =
-            if dragged.is_some() && !r.pressed { Tuning::new(0.14, 0.88) } else { Tuning::new(0.30, 0.86) };
+            if dragged.is_some() && !r.pressed { Tuning::new(0.12, 0.94) } else { Tuning::new(0.30, 0.90) };
         let flex = ThumbFlex::BLOB.liquid(ctx.theme.blob.liquidity);
         let f = d.step_flex(ctx, target, follow, r.held, pill, blob, flex);
         store_thumb(ctx, id, d);

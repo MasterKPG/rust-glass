@@ -35,9 +35,15 @@ pub(crate) struct Rig {
     pub(crate) app: Showcase,
 }
 
+/// The quality step of headless renders, from `--quality`.
+pub(crate) static QUALITY: std::sync::OnceLock<Quality> = std::sync::OnceLock::new();
+
 impl Rig {
     pub(crate) fn new(width: u32, height: u32, pixels_per_point: f32) -> Result<Self, String> {
         let mut host = Headless::new(width, height, pixels_per_point)?;
+        if let Some(q) = QUALITY.get() {
+            host.ctx.quality = *q;
+        }
         let mut app = Showcase::new();
         app.setup(&mut host.ctx);
         Ok(Self { host, app })

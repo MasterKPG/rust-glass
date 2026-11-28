@@ -144,7 +144,11 @@ impl Widget for Segmented<'_> {
         // Interpolate the resting width while travelling between cells.
         let hover_cell = nearest(target);
         let cell_w = ui.ctx.animate(r.id.with("w"), cells[hover_cell].width(), Tuning::SMOOTH);
-        let rest = vec2(cell_w, h - 1.0 * k);
+        // The thumb sits half a point inside the track, rounded to whole
+        // pixels so the snapped thumb has the same gap above and below.
+        let ppp = ui.ctx.pixels_per_point;
+        let inset = (0.5 * k * ppp).round().max(1.0) / ppp;
+        let rest = vec2(cell_w, h - 2.0 * inset);
         let lifted = vec2(cell_w * 1.07 + 4.0 * k, h * 1.34);
         let follow =
             if dragged.is_some() && !r.pressed { Tuning::new(0.13, 0.9) } else { Tuning::new(0.36, 0.80) };

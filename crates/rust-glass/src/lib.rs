@@ -57,7 +57,7 @@ pub mod widgets;
 #[doc = include_str!("../GUIDE.md")]
 pub mod guide {}
 
-pub use app::{App, FrameInfo, FrameStats, FrameTimes, Options, WindowIcon, run};
+pub use app::{App, FrameInfo, FrameStats, FrameTimes, Options, Quality, WindowIcon, run};
 pub use color::Color;
 pub use context::{Context, Id, Order, Response, Sense, Waker};
 pub use geometry::{Rect, Vec2, rect, vec2};
@@ -94,6 +94,6 @@ pub mod prelude {
     pub use crate::widgets::window::Window;
     pub use crate::{
         App, Color, Context, Corner, FrameInfo, Glass, GlassShape, Icon, Id, ImageId, Material, Options,
-        Order, Rect, Response, Sense, Surface, Theme, Ui, Vec2, Widget, rect, run, vec2,
+        Order, Quality, Rect, Response, Sense, Surface, Theme, Ui, Vec2, Widget, rect, run, vec2,
     };
 }

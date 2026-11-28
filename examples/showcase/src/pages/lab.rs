@@ -43,8 +43,13 @@ pub fn show(state: &mut State, ctx: &mut Context, info: &FrameInfo, area: Rect) 
         });
         parameters(state, ui);
         let gpu = info.gpu.gpu_ms.map_or("not measured".to_string(), |ms| format!("{ms:.1} ms"));
+        let quality = match info.gpu.quality {
+            Quality::Reduced => ", reduced quality",
+            Quality::Low => ", low quality",
+            _ => "",
+        };
         let stats = format!(
-            "Last frame: UI {:.2} ms, GPU {gpu}, {} render passes, {} glass elements",
+            "Last frame: UI {:.2} ms, GPU {gpu}, {} render passes, {} glass elements{quality}",
             info.ui_ms, info.gpu.passes, info.gpu.glasses
         );
         ui.caption(&stats);

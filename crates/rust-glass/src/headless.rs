@@ -16,6 +16,7 @@ pub struct Headless {
     gpu: Gpu,
     renderer: Renderer,
     target: wgpu::Texture,
+    view: wgpu::TextureView,
     size: (u32, u32),
     ppp: f32,
     time: f64,
@@ -36,6 +37,8 @@ impl Headless {
         let gpu = Gpu::new(Gpu::instance(), None, true)?;
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let renderer = Renderer::new(&gpu, format);
+        let mut ctx = Context::new();
+        ctx.quality = crate::Quality::Full;
         let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("headless"),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -47,9 +50,10 @@ impl Headless {
             view_formats: &[],
         });
         Ok(Self {
-            ctx: Context::new(),
+            ctx,
             gpu,
             renderer,
+            view: target.create_view(&Default::default()),
             target,
             size: (width, height),
             ppp,
@@ -83,13 +87,13 @@ impl Headless {
         for id in self.ctx.removed_images.drain(..) {
             self.renderer.remove_image(id);
         }
-        let view = self.target.create_view(&Default::default());
+        let view = &self.view;
         let t1 = std::time::Instant::now();
-        self.renderer.render(&self.ctx.paint.data, &view, self.size.0, self.size.1);
+        self.renderer.render(&self.ctx.paint.data, view, self.size.0, self.size.1);
         self.info.encode_ms = t1.elapsed().as_secs_f32() * 1000.0;
         let _ = self.gpu.device.poll(wgpu::PollType::wait_indefinitely());
         let stats = self.renderer.poll_stats();
-        self.ctx.apply_stats(&stats);
+        self.ctx.apply_stats(stats);
         self.info.gpu = self.renderer.frame_stats;
         let last = FrameTimes {
             ui_ms: self.info.ui_ms,
@@ -119,6 +123,13 @@ impl Headless {
     /// changed. Use it to time how long a whole frame takes.
     pub fn set_full_redraw(&mut self, on: bool) {
         self.renderer.set_full_redraw(on);
+    }
+
+    /// Draws the inside of large blurred glass at half resolution when `on`,
+    /// the default. Turn it off to compare with a frame drawn at full
+    /// resolution everywhere.
+    pub fn set_half_resolution(&mut self, on: bool) {
+        self.renderer.set_half_resolution(on);
     }
 
     /// Returns `true` if the last frame was drawn only in part, because the

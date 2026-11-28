@@ -99,8 +99,8 @@ impl ThumbFlex {
     /// The blob of a tab bar, fitted to the iOS 27 clips: it stretches wide
     /// as it lands and settles without a wobble.
     pub const BLOB: ThumbFlex = ThumbFlex {
-        chase: Tuning::new(0.42, 0.86),
-        amount: 0.20,
+        chase: Tuning::new(0.42, 0.90),
+        amount: 0.16,
         at: 2.3,
         width: 1.0,
         settle: Tuning::new(0.20, 0.95),

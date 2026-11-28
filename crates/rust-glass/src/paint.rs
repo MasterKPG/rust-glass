@@ -92,6 +92,9 @@ pub(crate) struct GlassInst {
     pub glow_pos: [f32; 2],
     pub glow: f32,
     pub glow_radius: f32,
+    /// The inside of the body drawn at half resolution, in pixels. Set by the
+    /// renderer; empty when the glass is drawn at full resolution.
+    pub interior: [f32; 4],
 }
 
 const RRECT: u32 = 0;
@@ -133,6 +136,7 @@ pub(crate) struct DrawData {
     pub light: [f32; 2],
     pub time: f32,
     pub ppp: f32,
+    pub quality: crate::gpu::Quality,
 }
 
 #[derive(Default)]
@@ -625,6 +629,7 @@ impl Painter<'_> {
             glow_pos: [glow_at.x * s, glow_at.y * s],
             glow: glow * presence,
             glow_radius: glow_radius * s,
+            interior: [0.0; 4],
         };
         let l = &mut self.paint.layers[self.layer];
         l.order.push((true, l.glasses.len() as u32, ImageId(0)));

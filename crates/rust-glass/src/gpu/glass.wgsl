@@ -55,6 +55,10 @@ struct Glass {
     glow_pos: vec2f,    // where a press lights the glass
     glow: f32,
     glow_radius: f32,
+
+    // The inside of the body that is drawn at half resolution, in pixels.
+    // Empty (zero size) when the whole element is drawn here.
+    interior: vec4f,
 };
 
 struct GShape {
@@ -76,11 +80,27 @@ struct VOut {
     @location(1) @interpolate(flat) i: u32,
 };
 
+// Ten vertices: a quad over the element, or, when its inside is drawn at
+// half resolution, a strip around that inside so it is not drawn twice.
 @vertex
 fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
     let g = glasses[ii];
+    let lo = max(g.bounds.xy, g.clip.xy);
+    let hi = min(g.bounds.zw, g.clip.zw);
     var o: VOut;
-    o.p = mix(max(g.bounds.xy, g.clip.xy), min(g.bounds.zw, g.clip.zw), quad_corner(vi));
+    if (g.interior.z > g.interior.x) {
+        // Corners in turn, top left, top right, bottom right, bottom left,
+        // each outside then inside, back to the first.
+        let k = (vi / 2u) % 4u;
+        let c = vec2f(f32(k == 1u || k == 2u), f32(k >= 2u));
+        if (vi % 2u == 0u) {
+            o.p = mix(lo, hi, c);
+        } else {
+            o.p = mix(g.interior.xy, g.interior.zw, c);
+        }
+    } else {
+        o.p = mix(lo, hi, quad_corner(min(vi, 3u)));
+    }
     o.pos = to_ndc(o.p);
     o.i = ii;
     return o;
@@ -182,6 +202,9 @@ fn sample_bg(p: vec2f, r: f32) -> vec3f {
         return textureSampleLevel(backdrop, samp, uv, 0.0).rgb;
     }
     let lod = clamp(log2(1.0 + r * 0.75), 0.0, 5.0);
+    if (G.quality > 1.5) {
+        return textureSampleLevel(backdrop, samp, uv, lod).rgb;
+    }
     let l0 = floor(lod);
     let a = bicubic(uv, l0);
     if (lod - l0 < 0.02) {
@@ -197,17 +220,46 @@ fn sample_bg(p: vec2f, r: f32) -> vec3f {
 // Cheaper version for very soft lookups: one level only.
 fn sample_wide(p: vec2f, r: f32) -> vec3f {
     let q = clamp(p, vec2f(0.5), G.size - 0.5);
-    return bicubic(q / G.tex_size, clamp(round(log2(1.0 + r * 0.75)), 0.0, 5.0));
+    let lod = clamp(round(log2(1.0 + r * 0.75)), 0.0, 5.0);
+    if (G.quality > 1.5) {
+        return textureSampleLevel(backdrop, samp, q / G.tex_size, lod).rgb;
+    }
+    return bicubic(q / G.tex_size, lod);
 }
 
 fn vibrance(c: vec3f, s: f32) -> vec3f {
     return max(mix(vec3f(luma(c)), c, s), vec3f(0.0));
 }
 
+// The inside of large blurred glass is smooth, so it is shaded at half
+// resolution into its own texture and scaled up. The full size draw then only
+// covers the edge around it.
+@vertex
+fn vs_half(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
+    let g = glasses[ii];
+    // Two pixels more than the inside, for the filter that scales it up.
+    let r = g.interior + vec4f(-2.0, -2.0, 2.0, 2.0);
+    var o: VOut;
+    o.p = mix(r.xy, r.zw, quad_corner(vi));
+    o.pos = to_ndc(o.p);
+    o.i = ii;
+    return o;
+}
+
+@fragment
+fn fs_half(in: VOut) -> @location(0) vec4f {
+    return shade(glasses[in.i], in.p);
+}
+
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
     let g = glasses[in.i];
     let p = in.p;
+    return shade(g, p) * mask_coverage(g.mask, p) * clip_coverage(g.clip, p);
+}
+
+// The glass at pixel `p`, premultiplied, before masks and clip.
+fn shade(g: Glass, p: vec2f) -> vec4f {
     let f = field(g.shape_start, g.shape_count, g.fuse, p);
     let d = f.d;
     let n = f.n;
@@ -221,7 +273,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
         let contact = exp(-max(d, 0.0) / (1.2 * G.ppp)) * min(g.dark_edge, 0.3) * 0.30;
         let a = clamp(g.shadow * soft + contact * g.opacity, 0.0, 1.0);
         var rgb = vec3f(0.0);
-        if (g.shadow_tint > 0.0 && a > 0.004) {
+        if (g.shadow_tint > 0.0 && a > 0.004 && G.quality < 1.5) {
             // Light that crossed the body: from the middle, widely spread.
             let q = p - n * (max(d, 0.0) + f.half * 0.95);
             let spread_px = max(f.half * 1.6, 10.0 * G.ppp);
@@ -259,7 +311,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
 
         var c: vec3f;
         let spread = abs(shift * dispersion) + abs(corner) * 4.0 * step(depth, max(g.pinch_width, g.inner_height));
-        if (blur < 3.0 && (spread > 0.35 || foot > 1.3)) {
+        if (blur < 3.0 && (spread > 0.35 || foot > 1.3) && G.quality < 1.5) {
             var sum = vec3f(0.0);
             var wsum = vec3f(0.0);
             let rr = max(select(blur, 0.0, blur < 1.2), min(foot * 0.09, 2.0));
@@ -278,7 +330,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
             c = sum / wsum;
         } else {
             blur = max(blur, min((foot - 1.0) * 0.4, 6.0));
-            if (spread > 0.35) {
+            if (spread > 0.35 && G.quality < 1.5) {
                 c.r = sample_bg(base + n * shift * (1.0 + dispersion), blur).r;
                 c.g = sample_bg(base + n * shift, blur).g;
                 c.b = sample_bg(base + n * shift * (1.0 - dispersion), blur).b;
@@ -288,8 +340,8 @@ fn fs(in: VOut) -> @location(0) vec4f {
         }
 
         // Light from the wider surroundings spills onto the edge.
-        if (g.light_spill > 0.0) {
-            let e = g.light_spill * exp(-depth / max(g.inner_height * 0.8, 1.0));
+        if (g.light_spill > 0.0 && G.quality < 1.5) {
+            let e = g.light_spill * (1.0 - 0.5 * g.tint.z) * exp(-depth / max(g.inner_height * 0.8, 1.0));
             if (e > 0.008) {
                 let q = p + n * (g.inner_height * 0.8 + 6.0 * G.ppp);
                 c = mix(c, vibrance(sample_wide(q, 14.0 * G.ppp), 1.5), e);
@@ -335,13 +387,13 @@ fn fs(in: VOut) -> @location(0) vec4f {
         let band_w = max(min(g.inner_height * 0.55, f.half * 0.5), 2.0 * G.ppp);
         let band = 1.0 - smoothstep(0.0, band_w, depth);
         let toward = mix(vec3f(0.0), vec3f(1.0), g.tint.z);
-        c = mix(c, toward, band * band * mix(0.05, 0.08, g.tint.z) * op);
+        c = mix(c, toward, band * band * mix(0.05, 0.0, g.tint.z) * op);
 
         // The specular rim: a fine line that fades softly into the body.
         let rw = max(g.rim_width, 0.9);
         let line = gauss((sd - rw * 0.55) / (rw * 0.68));
         let soft = exp(-max(sd, 0.0) / (rw * 3.2));
-        let profile = 0.55 * line + 0.45 * soft;
+        let profile = 0.55 * line + 0.45 * soft * (1.0 - 0.5 * g.tint.z);
         let halo = exp(-depth / max(2.0 * G.ppp, 0.8)) * min(g.inner_glow * 2.4, 0.6) * smoothstep(0.0, 0.5, far);
         let dir = (1.0 - 0.9 * g.dark_edge) * pow(near, 1.6) + pow(far, 1.2);
         let key = g.rim_base + (1.0 - g.rim_base) * min(dir, 1.0);
@@ -364,5 +416,5 @@ fn fs(in: VOut) -> @location(0) vec4f {
         out = vec4f(clamp(c, vec3f(0.0), vec3f(1.0)) * a, a) + under * (1.0 - a);
     }
 
-    return out * mask_coverage(g.mask, p) * clip_coverage(g.clip, p);
+    return out;
 }

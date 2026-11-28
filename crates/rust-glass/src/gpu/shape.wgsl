@@ -26,6 +26,8 @@ const SPRITE: u32 = 2u;
 const IMAGE: u32 = 3u;
 const ARC: u32 = 4u;
 const LINE: u32 = 5u;
+// The inside of glass drawn at half resolution: premultiplied, scaled up.
+const HALF: u32 = 6u;
 
 struct VOut {
     @builtin(position) pos: vec4f,
@@ -66,6 +68,10 @@ fn fs(in: VOut) -> @location(0) vec4f {
     let center = (s.rect.xy + s.rect.zw) * 0.5;
     let half = (s.rect.zw - s.rect.xy) * 0.5;
 
+    if (s.kind == HALF) {
+        let t = textureSampleLevel(image, samp, in.t, 0.0);
+        return t * clip_coverage(s.clip, p) * mask_coverage(s.mask, p);
+    }
     if (s.kind == GLYPH) {
         cov = textureSampleLevel(glyphs, samp, in.t, 0.0).r;
     } else if (s.kind == SPRITE) {

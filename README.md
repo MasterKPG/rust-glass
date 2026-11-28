@@ -30,7 +30,8 @@ More pictures are in the [preview folder](https://github.com/MasterKPG/rust-glas
 - Scrolling on one or two axes, and lists of any length that only lay out the visible rows
 - Drag and drop, and lists that reorder by dragging
 - Text fields with undo, redo and input method support
-- Draws only when something changes. An idle window uses no CPU
+- Draws only when something changes, and only the part that changed. An idle window uses no CPU
+- Large blurred glass draws its inside at half resolution, and a window lowers the quality of its glass by itself when the GPU cannot keep up
 
 Widgets: buttons, button groups, split button, slider, stepper, drag value, switch, checkbox, radio button, segmented control, tab bar, text fields, menus, combo box, context menu, color picker, progress bar, gauge, spinner, tooltip, toast, alert, modal, sheet, window, panel, navigation list, settings row, scroll area, drag source, drop zone, reorderable list, collapsing section, table, card, image and link.
 
