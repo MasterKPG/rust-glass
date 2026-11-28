@@ -4,6 +4,8 @@ All notable changes are listed here. Format: Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-28
+
 ### Added
 - `Quality` and `Context::quality` set how far glass may be simplified to keep up. Windows start at `Quality::Auto`: after three large frames over 14 ms of GPU time the glass steps down, and it steps back up after 120 frames with plenty of room. `Reduced` drops glass shadows, so glass covers only its body; at 4K on Intel UHD Graphics that makes a page 12 percent faster and opening a menu or a sheet about a fifth faster. `Low` also drops rainbow edges, light spilled onto edges and the bicubic blur filter. `FrameStats::quality` is the step a frame was drawn with. `Headless` draws at `Quality::Full`.
 - `Headless::set_half_resolution` and `RUST_GLASS_NO_HALF=1` draw large blurred glass at full size everywhere, for comparison.
@@ -156,7 +158,8 @@ First public release.
 - Menus stay attached to a button that scrolls or moves.
 - Springs no longer jump the last fraction of a point when they settle.
 
-[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/MasterKPG/rust-glass/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/MasterKPG/rust-glass/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/MasterKPG/rust-glass/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/MasterKPG/rust-glass/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/MasterKPG/rust-glass/compare/v0.1.0...v0.1.1
